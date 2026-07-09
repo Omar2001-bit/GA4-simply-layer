@@ -25,6 +25,6 @@ export default function ReportPage() {
   }, [id]);
 
   if (error) return <p className="text-sm text-[#e66767]">{error}</p>;
-  if (!report) return <p className="text-sm text-[#898781]">Loading report…</p>;
+  if (!report) return <p className="text-sm text-[#7f959d]">Loading report…</p>;
   return <ReportCanvas initial={report} lockView={lockView} />;
 }

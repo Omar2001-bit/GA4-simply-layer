@@ -15,7 +15,7 @@ function metricLabel(apiName: string, meta?: MetaItem[]): string {
 }
 
 function Delta({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-[#898781]">–</span>;
+  if (value === null) return <span className="text-[#7f959d]">–</span>;
   const color = value < 0 ? DELTA_DOWN : DELTA_UP;
   return (
     <span style={{ color }} className="font-medium tabular-nums">
@@ -34,9 +34,9 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
         return (
           <div
             key={m}
-            className="rounded-xl border border-white/10 bg-[#1a1a19] px-4 py-3"
+            className="rounded-xl border border-white/10 bg-[#0e1c26] px-4 py-3"
           >
-            <div className="truncate text-xs uppercase tracking-wider text-[#898781]">
+            <div className="truncate text-xs uppercase tracking-wider text-[#7f959d]">
               {metricLabel(m, metricsMeta)}
             </div>
             <div className={`mt-1 font-semibold text-white ${compact ? "text-xl" : "text-2xl"}`}>
@@ -45,7 +45,7 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
             {data.rangeB && (
               <div className="mt-1 flex items-baseline gap-2 text-xs">
                 <Delta value={deltaPct(a, b)} />
-                <span className="text-[#898781]">vs {fmtValue(b ?? 0, type)}</span>
+                <span className="text-[#7f959d]">vs {fmtValue(b ?? 0, type)}</span>
               </div>
             )}
           </div>
@@ -62,10 +62,10 @@ export default function NumbersView({ data, metricsMeta }: Props) {
     <div className="space-y-4">
       <KpiCards data={data} metricsMeta={metricsMeta} />
       {hasDim && (
-        <div className="overflow-x-auto rounded-xl border border-white/10 bg-[#1a1a19]">
+        <div className="overflow-x-auto rounded-xl border border-white/10 bg-[#0e1c26]">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-[#898781]">
+              <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-[#7f959d]">
                 <th className="px-4 py-3 font-medium">{humanize(data.dimension)}</th>
                 {data.metrics.map((m, i) => (
                   <th key={m} className="px-4 py-3 text-right font-medium" colSpan={hasCompare ? 3 : 1}>
@@ -74,7 +74,7 @@ export default function NumbersView({ data, metricsMeta }: Props) {
                 ))}
               </tr>
               {hasCompare && (
-                <tr className="border-b border-white/10 text-right text-[11px] text-[#898781]">
+                <tr className="border-b border-white/10 text-right text-[11px] text-[#7f959d]">
                   <th className="px-4 py-1.5 text-left font-normal"></th>
                   {data.metrics.map((m) => (
                     <FragmentHeads key={m} />
@@ -85,10 +85,10 @@ export default function NumbersView({ data, metricsMeta }: Props) {
             <tbody>
               {data.rows.map((r, ri) => (
                 <tr key={`${r.dim}-${ri}`} className="border-b border-white/5 last:border-0 hover:bg-white/[0.03]">
-                  <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c3c2b7]">
+                  <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c2d1d5]">
                     {data.dimension === "date" ? fmtDateLabel(r.dim) : r.dim || "(not set)"}
                     {r.bDim && (
-                      <span className="ml-2 text-xs text-[#898781]">vs {fmtDateLabel(r.bDim)}</span>
+                      <span className="ml-2 text-xs text-[#7f959d]">vs {fmtDateLabel(r.bDim)}</span>
                     )}
                   </td>
                   {data.metrics.map((m, mi) => {
@@ -127,7 +127,7 @@ function FragmentCells({ a, b, type }: { a: number; b?: number; type?: string })
   return (
     <>
       <td className="px-2 py-2.5 text-right tabular-nums text-white">{fmtValue(a, type)}</td>
-      <td className="px-2 py-2.5 text-right tabular-nums text-[#898781]">
+      <td className="px-2 py-2.5 text-right tabular-nums text-[#7f959d]">
         {b === undefined ? "–" : fmtValue(b, type)}
       </td>
       <td className="px-2 py-2.5 text-right">

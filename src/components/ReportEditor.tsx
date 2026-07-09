@@ -14,9 +14,9 @@ interface Props {
   savedAt: number | null;
 }
 
-const labelCls = "mb-1 block text-xs font-medium uppercase tracking-wider text-[#898781]";
+const labelCls = "mb-1 block text-xs font-medium uppercase tracking-wider text-[#7f959d]";
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-[#111110] px-3 py-2 text-sm text-white outline-none focus:border-[#3987e5]";
+  "w-full rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-sm text-white outline-none focus:border-[#6ae499]";
 
 export default function ReportEditor({
   config,
@@ -31,7 +31,7 @@ export default function ReportEditor({
   const set = (patch: Partial<ReportConfig>) => onChange({ ...config, ...patch });
 
   return (
-    <aside className="w-full shrink-0 space-y-4 rounded-xl border border-white/10 bg-[#1a1a19] p-4 lg:w-80">
+    <aside className="w-full shrink-0 space-y-4 rounded-xl border border-white/10 bg-[#0e1c26] p-4 lg:w-80">
       <div>
         <label className={labelCls}>Report name</label>
         <input className={inputCls} value={config.name} onChange={(e) => set({ name: e.target.value })} />
@@ -116,7 +116,7 @@ export default function ReportEditor({
           type="button"
           onClick={onSave}
           disabled={saving || !config.name.trim() || config.metrics.length === 0}
-          className="rounded-lg bg-[#3987e5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2a78d6] disabled:opacity-50"
+          className="rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] hover:bg-[#57cf86] disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save preset"}
         </button>

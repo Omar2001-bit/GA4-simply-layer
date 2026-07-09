@@ -15,6 +15,6 @@ export default function BuilderPage() {
       .catch(() => setInitial(defaultReport("")));
   }, []);
 
-  if (!initial) return <p className="text-sm text-[#898781]">Loading…</p>;
+  if (!initial) return <p className="text-sm text-[#7f959d]">Loading…</p>;
   return <ReportCanvas initial={initial} startEditing isNew />;
 }

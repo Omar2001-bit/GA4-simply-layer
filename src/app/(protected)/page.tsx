@@ -32,16 +32,16 @@ export default function MegaDashboard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-white">Mega dashboard</h1>
-          <p className="text-sm text-[#898781]">
+          <p className="text-sm text-[#7f959d]">
             All saved reports at a glance — click a report to zoom in.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm text-[#898781]">
+        <label className="flex items-center gap-2 text-sm text-[#7f959d]">
           Dates:
           <select
             value={globalPreset}
             onChange={(e) => setGlobalPreset(e.target.value)}
-            className="rounded-lg border border-white/10 bg-[#1a1a19] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#3987e5]"
+            className="rounded-lg border border-white/10 bg-[#0e1c26] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#6ae499]"
           >
             <option value="">Per-report saved dates</option>
             {RANGE_PRESETS.filter((p) => p.value !== "custom").map((p) => (
@@ -57,10 +57,10 @@ export default function MegaDashboard() {
 
       {presets && presets.reports.length === 0 && (
         <div className="rounded-2xl border border-dashed border-white/15 p-12 text-center">
-          <p className="text-[#c3c2b7]">No reports yet.</p>
+          <p className="text-[#c2d1d5]">No reports yet.</p>
           <Link
             href="/builder"
-            className="mt-3 inline-block rounded-lg bg-[#3987e5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2a78d6]"
+            className="mt-3 inline-block rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] hover:bg-[#57cf86]"
           >
             Create your first report
           </Link>

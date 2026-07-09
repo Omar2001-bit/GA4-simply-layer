@@ -1,24 +1,24 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0d0d0d;
+  --background: #020601;
   --foreground: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-sora);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-sora), system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* recessive scrollbars for the dark surface */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #383835 transparent;
+  scrollbar-color: #24363f transparent;
 }

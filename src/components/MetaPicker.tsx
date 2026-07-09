@@ -44,20 +44,20 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full truncate rounded-lg border border-white/10 bg-[#111110] px-3 py-2 text-left text-sm text-white hover:border-white/20"
+        className="w-full truncate rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-left text-sm text-white hover:border-white/20"
       >
         {label}
-        <span className="float-right text-[#898781]">{open ? "▴" : "▾"}</span>
+        <span className="float-right text-[#7f959d]">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-white/10 bg-[#1a1a19] shadow-2xl">
-          <div className="sticky top-0 bg-[#1a1a19] p-2">
+        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-white/10 bg-[#0e1c26] shadow-2xl">
+          <div className="sticky top-0 bg-[#0e1c26] p-2">
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={`Search ${placeholder.toLowerCase()}…`}
-              className="w-full rounded-md border border-white/10 bg-[#111110] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#3987e5]"
+              className="w-full rounded-md border border-white/10 bg-[#081219] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#6ae499]"
             />
           </div>
           {allowNone && (
@@ -67,7 +67,7 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
                 if (selected.length) selected.forEach((s) => onToggle(s));
                 setOpen(false);
               }}
-              className="block w-full px-3 py-2 text-left text-sm text-[#898781] hover:bg-white/5"
+              className="block w-full px-3 py-2 text-left text-sm text-[#7f959d] hover:bg-white/5"
             >
               None (totals only)
             </button>
@@ -91,16 +91,16 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
                   }
                 }}
                 className={`block w-full px-3 py-2 text-left text-sm hover:bg-white/5 disabled:opacity-40 ${
-                  isSel ? "text-[#3987e5]" : "text-[#c3c2b7]"
+                  isSel ? "text-[#6ae499]" : "text-[#c2d1d5]"
                 }`}
               >
                 <span className="mr-2 inline-block w-4">{isSel ? "✓" : ""}</span>
                 {i.uiName}
-                <span className="ml-2 text-xs text-[#898781]">{i.category}</span>
+                <span className="ml-2 text-xs text-[#7f959d]">{i.category}</span>
               </button>
             );
           })}
-          {filtered.length === 0 && <div className="px-3 py-3 text-sm text-[#898781]">No matches</div>}
+          {filtered.length === 0 && <div className="px-3 py-3 text-sm text-[#7f959d]">No matches</div>}
         </div>
       )}
     </div>

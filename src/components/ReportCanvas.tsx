@@ -84,7 +84,7 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-white">{config.name}</h1>
-          {config.description && <p className="text-sm text-[#898781]">{config.description}</p>}
+          {config.description && <p className="text-sm text-[#7f959d]">{config.description}</p>}
         </div>
         {!lockView && (
           <button
@@ -92,8 +92,8 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
             onClick={() => setEditing((v) => !v)}
             className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
               editing
-                ? "bg-[#3987e5] text-white hover:bg-[#2a78d6]"
-                : "border border-white/10 text-[#c3c2b7] hover:border-white/25"
+                ? "bg-[#6ae499] text-[#0e1c26] hover:bg-[#57cf86]"
+                : "border border-white/10 text-[#c2d1d5] hover:border-white/25"
             }`}
           >
             {editing ? "Done — view mode" : "Edit report"}
@@ -102,7 +102,7 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
       </div>
 
       {/* date controls always live, even in view mode */}
-      <div className="rounded-xl border border-white/10 bg-[#1a1a19] px-4 py-3">
+      <div className="rounded-xl border border-white/10 bg-[#0e1c26] px-4 py-3">
         <DateControls
           rangeA={config.rangeA}
           rangeB={config.rangeB}
@@ -126,15 +126,15 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
 
         <div className="min-w-0 flex-1 space-y-4">
           {/* Section 1: Graph view */}
-          <section className="rounded-xl border border-white/10 bg-[#1a1a19] p-4">
+          <section className="rounded-xl border border-white/10 bg-[#0e1c26] p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[#898781]">Graph view</h2>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-[#7f959d]">Graph view</h2>
               <div className="flex flex-wrap items-center gap-2">
                 {config.metrics.length > 1 && (
                   <select
                     value={metricIndex}
                     onChange={(e) => setMetricIndex(Number(e.target.value))}
-                    className="rounded-lg border border-white/10 bg-[#111110] px-2 py-1 text-xs text-white outline-none"
+                    className="rounded-lg border border-white/10 bg-[#081219] px-2 py-1 text-xs text-white outline-none"
                   >
                     {config.metrics.map((m, i) => (
                       <option key={m} value={i}>
@@ -151,8 +151,8 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
                       onClick={() => setChartType(c.value)}
                       className={`px-2.5 py-1 text-xs transition-colors ${
                         chartType === c.value
-                          ? "bg-[#3987e5] text-white"
-                          : "text-[#898781] hover:bg-white/5 hover:text-[#c3c2b7]"
+                          ? "bg-[#6ae499] text-[#0e1c26]"
+                          : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
                       }`}
                     >
                       {c.label}
@@ -163,8 +163,8 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
             </div>
             <div className="relative">
               {loading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#1a1a19]/60">
-                  <span className="text-sm text-[#898781]">Loading…</span>
+                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#0e1c26]/60">
+                  <span className="text-sm text-[#7f959d]">Loading…</span>
                 </div>
               )}
               {error ? (
@@ -178,8 +178,8 @@ export default function ReportCanvas({ initial, startEditing = false, lockView =
           </section>
 
           {/* Section 2: Numbers view */}
-          <section className="rounded-xl border border-white/10 bg-[#0d0d0d] p-4">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[#898781]">Numbers view</h2>
+          <section className="rounded-xl border border-white/10 bg-[#020601] p-4">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[#7f959d]">Numbers view</h2>
             {data ? (
               <NumbersView data={data} metricsMeta={metadata?.metrics} />
             ) : (
