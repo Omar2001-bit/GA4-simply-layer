@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local presets
 /data/
+
+# deploy secrets helper
+DEPLOY-ENV.txt

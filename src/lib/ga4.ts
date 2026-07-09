@@ -111,11 +111,35 @@ interface RawReport {
   rowCount?: number;
 }
 
+const MATCH_MAP: Record<string, string> = {
+  contains: "CONTAINS",
+  exact: "EXACT",
+  begins: "BEGINS_WITH",
+  ends: "ENDS_WITH",
+  regex: "FULL_REGEXP",
+};
+
+function buildDimensionFilter(filters: ReportRequest["filters"]) {
+  const clauses = (filters ?? []).filter((f) => f.field && f.value);
+  if (!clauses.length) return undefined;
+  const expressions = clauses.map((f) => {
+    const filter = {
+      filter: {
+        fieldName: f.field,
+        stringFilter: { matchType: MATCH_MAP[f.match] ?? "CONTAINS", value: f.value, caseSensitive: false },
+      },
+    };
+    return f.not ? { notExpression: filter } : filter;
+  });
+  return expressions.length === 1 ? expressions[0] : { andGroup: { expressions } };
+}
+
 export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   const hasDim = !!req.dimension;
   const hasCompare = !!req.rangeB;
   const metrics = req.metrics.slice(0, 10).map((m) => ({ name: m }));
   const dimensions = hasDim ? [{ name: req.dimension }] : [];
+  const dimensionFilter = buildDimensionFilter(req.filters);
 
   const body: Record<string, unknown> = {
     dateRanges: hasCompare ? [req.rangeA, req.rangeB] : [req.rangeA],
@@ -129,6 +153,7 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
     metricAggregations: ["TOTAL"],
     keepEmptyRows: false,
   };
+  if (dimensionFilter) body.dimensionFilter = dimensionFilter;
   if (hasDim && req.dimension !== "date") {
     body.orderBys = [{ metric: { metricName: req.metrics[0] }, desc: true }];
   } else if (req.dimension === "date") {

@@ -25,6 +25,16 @@ export async function POST(req: Request) {
   if (body.rangeB && (!DATE_RE.test(body.rangeB.startDate) || !DATE_RE.test(body.rangeB.endDate))) {
     return NextResponse.json({ error: "Invalid rangeB" }, { status: 400 });
   }
+  if (body.filters) {
+    if (!Array.isArray(body.filters) || body.filters.length > 10) {
+      return NextResponse.json({ error: "Invalid filters" }, { status: 400 });
+    }
+    for (const f of body.filters) {
+      if (typeof f.field !== "string" || typeof f.value !== "string") {
+        return NextResponse.json({ error: "Invalid filter clause" }, { status: 400 });
+      }
+    }
+  }
   try {
     const data = await runReport(body);
     return NextResponse.json(data);

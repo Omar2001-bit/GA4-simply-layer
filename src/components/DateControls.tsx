@@ -1,6 +1,7 @@
 "use client";
 
 import { COMPARE_PRESETS, RANGE_PRESETS, resolveCompare, resolveRange } from "@/lib/dates";
+import { SERIES_A, SERIES_B } from "@/lib/theme";
 import type { CompareSel, DateRangeSel } from "@/lib/types";
 
 interface Props {
@@ -11,26 +12,28 @@ interface Props {
 }
 
 const selectCls =
-  "rounded-lg border border-white/10 bg-[#0e1c26] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#6ae499]";
+  "rounded-lg border border-white/10 bg-[#081219] px-2.5 py-1.5 text-sm text-white outline-none transition-colors focus:border-[#6ae499]";
 const dateCls =
-  "rounded-lg border border-white/10 bg-[#0e1c26] px-2 py-1.5 text-sm text-[#c2d1d5] outline-none focus:border-[#6ae499] [color-scheme:dark]";
+  "rounded-lg border border-white/10 bg-[#081219] px-2 py-1.5 text-sm text-[#c2d1d5] outline-none transition-colors focus:border-[#6ae499] [color-scheme:dark]";
 
 export default function DateControls({ rangeA, rangeB, onChange, compact }: Props) {
   const resolvedA = resolveRange(rangeA);
   const resolvedB = resolveCompare(rangeB, resolvedA);
 
   return (
-    <div className={`flex flex-wrap items-center gap-2 ${compact ? "text-xs" : "text-sm"}`}>
-      <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#6ae499]" title="Current period" />
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${compact ? "text-xs" : "text-sm"}`}>
+      {/* Current period */}
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: SERIES_A }} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">Current</span>
+      </span>
       <select
         className={selectCls}
         value={rangeA.preset}
         onChange={(e) => {
           const preset = e.target.value as DateRangeSel["preset"];
           onChange(
-            preset === "custom"
-              ? { preset, start: resolvedA.startDate, end: resolvedA.endDate }
-              : { preset },
+            preset === "custom" ? { preset, start: resolvedA.startDate, end: resolvedA.endDate } : { preset },
             rangeB
           );
         }}
@@ -58,13 +61,21 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
           />
         </span>
       ) : (
-        <span className="text-[#7f959d]">
+        <span className="tabular-nums text-[#7f959d]">
           {resolvedA.startDate} → {resolvedA.endDate}
         </span>
       )}
 
-      <span className="mx-1 text-[#24363f]">|</span>
-      <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2f9e66]" title="Comparison period" />
+      <span className="hidden h-4 w-px bg-white/10 sm:inline-block" />
+
+      {/* Previous period */}
+      <span className="flex items-center gap-1.5">
+        <span
+          className="inline-block h-2 w-2 rounded-full"
+          style={{ border: `1.5px dashed ${SERIES_B}`, background: "transparent" }}
+        />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">Previous</span>
+      </span>
       <select
         className={selectCls}
         value={rangeB.preset}
@@ -102,7 +113,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
         </span>
       ) : (
         resolvedB && (
-          <span className="text-[#7f959d]">
+          <span className="tabular-nums text-[#7f959d]">
             {resolvedB.startDate} → {resolvedB.endDate}
           </span>
         )

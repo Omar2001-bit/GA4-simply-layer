@@ -43,6 +43,23 @@ export interface CompareSel {
   end?: string;
 }
 
+export type FilterMatch = "contains" | "exact" | "begins" | "ends" | "regex";
+
+export const FILTER_MATCHES: { value: FilterMatch; label: string }[] = [
+  { value: "contains", label: "contains" },
+  { value: "exact", label: "is exactly" },
+  { value: "begins", label: "begins with" },
+  { value: "ends", label: "ends with" },
+  { value: "regex", label: "matches regex" },
+];
+
+export interface FilterClause {
+  field: string; // GA4 dimension apiName (eventName, audienceName, country, …)
+  match: FilterMatch;
+  value: string;
+  not?: boolean;
+}
+
 export interface ReportConfig {
   id: string;
   name: string;
@@ -53,6 +70,7 @@ export interface ReportConfig {
   chartType: ChartType;
   rangeA: DateRangeSel; // current / "after"
   rangeB: CompareSel; // comparison / "before"
+  filters?: FilterClause[]; // ANDed dimension filters
   limit: number;
   createdAt: string;
   updatedAt: string;
@@ -76,6 +94,7 @@ export interface ReportRequest {
   metrics: string[];
   rangeA: ResolvedRange;
   rangeB?: ResolvedRange | null;
+  filters?: FilterClause[];
   limit?: number;
 }
 

@@ -13,8 +13,8 @@ export function useReport(config: ReportConfig | null) {
 
   const queryKey = useMemo(() => {
     if (!config) return "";
-    const { property, dimension, metrics, rangeA, rangeB, limit } = config;
-    return JSON.stringify({ property, dimension, metrics, rangeA, rangeB, limit });
+    const { property, dimension, metrics, rangeA, rangeB, filters, limit } = config;
+    return JSON.stringify({ property, dimension, metrics, rangeA, rangeB, filters, limit });
   }, [config]);
 
   useEffect(() => {
@@ -35,6 +35,7 @@ export function useReport(config: ReportConfig | null) {
         metrics: config.metrics,
         rangeA: a,
         rangeB: b,
+        filters: config.filters?.filter((f) => f.field && f.value),
         limit: config.limit,
       }),
       signal: ctrl.signal,
@@ -61,6 +62,7 @@ export function newReportId(): string {
   return `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/** A blank slate: no metrics, no dimension — the builder invites the user to fill it. */
 export function defaultReport(property: string): ReportConfig {
   const now = new Date().toISOString();
   return {
@@ -68,11 +70,12 @@ export function defaultReport(property: string): ReportConfig {
     name: "Untitled report",
     description: "",
     property,
-    dimension: "date",
-    metrics: ["sessions", "totalUsers"],
+    dimension: "",
+    metrics: [],
     chartType: "line",
     rangeA: { preset: "last28" },
     rangeB: { preset: "previousPeriod" },
+    filters: [],
     limit: 25,
     createdAt: now,
     updatedAt: now,

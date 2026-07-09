@@ -16,5 +16,5 @@ export default function BuilderPage() {
   }, []);
 
   if (!initial) return <p className="text-sm text-[#7f959d]">Loading…</p>;
-  return <ReportCanvas initial={initial} startEditing isNew />;
+  return <ReportCanvas initial={initial} startEditing isNew backHref="/" />;
 }
