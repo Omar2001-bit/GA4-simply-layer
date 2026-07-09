@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GA4 Simply Layer
 
-## Getting Started
+A simpler reporting layer on top of Google Analytics 4 — built for clients and internal teams who just want to *see the numbers*.
 
-First, run the development server:
+## What it does
+
+- **Reports** — each report has two sections: a **Graph view** (line / area / bar / horizontal bar / pie / donut, switchable live) and a **Numbers view** (KPI cards + full comparison table with Δ%).
+- **Before / after comparison** — every report has two date ranges (current + comparison) changeable via selectors; charts and numbers re-render as you play with the dates.
+- **Presets** — build a report once, save it. Saved reports become templates.
+- **View mode** — toggle the editor off for a clean, read-only visualization mode (append `?mode=view` to a report URL for a locked client link).
+- **Mega dashboard** — all saved reports on one screen with a global date override; click any report to zoom into the full graph + numbers detail.
+- **Multi-property** — auto-discovers every GA4 property the service account can access.
+- **Password gate** — one shared dashboard password keeps client data off the open internet.
+
+## Stack
+
+Next.js (App Router) · Recharts · Tailwind · GA4 Data + Admin APIs (REST, service-account JWT) · Vercel Blob for preset storage in production (local JSON file in dev).
+
+## Environment variables
+
+| Var | Purpose |
+|-----|---------|
+| `GA_SA_KEY_B64` | Base64 of the Google service-account JSON key (analytics.readonly scope; grant the SA Viewer on each GA4 property) |
+| `DASHBOARD_PASSWORD` | Shared password for the login gate |
+| `DEFAULT_GA4_PROPERTY` | e.g. `properties/413595793` — pre-selected property for new reports |
+| `BLOB_READ_WRITE_TOKEN` | Auto-provisioned by Vercel Blob; enables persistent presets in production |
+
+Create `.env.local` with the first three for local dev:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+GA_SA_KEY_B64=<base64 of sa-key.json>
+DASHBOARD_PASSWORD=<password>
+DEFAULT_GA4_PROPERTY=properties/413595793
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Presets are stored in `data/presets.json` locally (gitignored) and in Vercel Blob when deployed.
