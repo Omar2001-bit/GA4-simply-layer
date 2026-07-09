@@ -138,10 +138,14 @@ function buildDimensionFilter(filters: ReportRequest["filters"]) {
 }
 
 export async function runReport(req: ReportRequest): Promise<ReportResponse> {
-  const hasDim = !!req.dimension;
+  // GA4 caps: 9 dimensions, 10 metrics per request
+  const dims = (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
+  const hasDim = dims.length > 0;
+  const hasDate = dims.includes("date");
+  const isDateOnly = dims.length === 1 && dims[0] === "date";
   const hasCompare = !!req.rangeB;
   const metrics = req.metrics.slice(0, 10).map((m) => ({ name: m }));
-  const dimensions = hasDim ? [{ name: req.dimension }] : [];
+  const dimensions = dims.map((d) => ({ name: d }));
   const dimensionFilter = buildDimensionFilter(req.filters);
 
   const body: Record<string, unknown> = {
@@ -149,18 +153,15 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
     metrics,
     dimensions,
     // date series must never truncate mid-range; categorical rows honor the user limit
-    limit:
-      req.dimension === "date"
-        ? "5000"
-        : String(Math.min(req.limit ?? 25, 1000) * (hasCompare ? 2 : 1)),
+    limit: hasDate ? "10000" : String(Math.min(req.limit ?? 25, 1000) * (hasCompare ? 2 : 1)),
     metricAggregations: ["TOTAL"],
     keepEmptyRows: false,
   };
   if (dimensionFilter) body.dimensionFilter = dimensionFilter;
-  if (hasDim && req.dimension !== "date") {
-    body.orderBys = [{ metric: { metricName: req.metrics[0] }, desc: true }];
-  } else if (req.dimension === "date") {
+  if (hasDate) {
     body.orderBys = [{ dimension: { dimensionName: "date" } }];
+  } else if (hasDim) {
+    body.orderBys = [{ metric: { metricName: req.metrics[0] }, desc: true }];
   }
 
   const data = await gaRequest<RawReport>(`${DATA_API}/${req.property}:runReport`, "POST", body);
@@ -169,18 +170,21 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   const dimHeaders = (data.dimensionHeaders ?? []).map((h) => h.name);
   // when 2 dateRanges are sent, GA4 appends a "dateRange" dimension
   const drIdx = dimHeaders.indexOf("dateRange");
-  const dimIdx = hasDim ? dimHeaders.indexOf(req.dimension) : -1;
+  const dimIdxs = dims.map((d) => dimHeaders.indexOf(d)).filter((i) => i >= 0);
 
   const rowMap = new Map<string, ReportRow>();
   const order: string[] = [];
-  const isDateCompare = req.dimension === "date" && hasCompare;
+  // day-aligned overlay only works for a pure date breakdown
+  const isDateCompare = isDateOnly && hasCompare;
   const seriesA: { dim: string; mets: number[] }[] = [];
   const seriesB: { dim: string; mets: number[] }[] = [];
   for (const r of data.rows ?? []) {
-    const dims = r.dimensionValues ?? [];
+    const dvals = r.dimensionValues ?? [];
     const mets = (r.metricValues ?? []).map((v) => Number(v.value) || 0);
-    const dimVal = dimIdx >= 0 ? dims[dimIdx]?.value ?? "" : "total";
-    const which = drIdx >= 0 ? dims[drIdx]?.value ?? "date_range_0" : "date_range_0";
+    const dimVal = dimIdxs.length
+      ? dimIdxs.map((idx) => dvals[idx]?.value ?? "").join(" · ")
+      : "total";
+    const which = drIdx >= 0 ? dvals[drIdx]?.value ?? "date_range_0" : "date_range_0";
     if (isDateCompare) {
       // dates differ between ranges — collect separately, align by day index below
       if (which === "date_range_0") seriesA.push({ dim: dimVal, mets });
@@ -250,8 +254,10 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   const limit = Math.min(req.limit ?? 25, 1000);
   if (isDateCompare) {
     // already aligned + ordered by day index
-  } else if (req.dimension === "date") {
-    rows = rows.sort((x, y) => x.dim.localeCompare(y.dim));
+  } else if (isDateOnly) {
+    rows = rows.sort((x, y) => x.dim.localeCompare(y.dim)); // never truncate a pure date series
+  } else if (hasDate) {
+    rows = rows.sort((x, y) => x.dim.localeCompare(y.dim)).slice(0, limit);
   } else {
     rows = rows.sort((x, y) => (y.a[0] ?? 0) - (x.a[0] ?? 0)).slice(0, limit);
   }
@@ -259,7 +265,8 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   return {
     metrics: req.metrics,
     metricHeaders,
-    dimension: req.dimension,
+    dimension: dims[0] ?? "",
+    dimensions: dims,
     rows,
     totalsA,
     totalsB,

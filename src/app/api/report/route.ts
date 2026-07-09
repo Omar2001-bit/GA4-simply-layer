@@ -16,8 +16,11 @@ export async function POST(req: Request) {
   if (!body.property || !/^properties\/\d+$/.test(body.property)) {
     return NextResponse.json({ error: "Invalid property" }, { status: 400 });
   }
-  if (!Array.isArray(body.metrics) || body.metrics.length === 0) {
-    return NextResponse.json({ error: "At least one metric required" }, { status: 400 });
+  if (!Array.isArray(body.metrics) || body.metrics.length === 0 || body.metrics.length > 10) {
+    return NextResponse.json({ error: "Between 1 and 10 metrics required (GA4 limit)" }, { status: 400 });
+  }
+  if (body.dimensions && (!Array.isArray(body.dimensions) || body.dimensions.length > 9)) {
+    return NextResponse.json({ error: "At most 9 dimensions (GA4 limit)" }, { status: 400 });
   }
   if (!body.rangeA || !DATE_RE.test(body.rangeA.startDate) || !DATE_RE.test(body.rangeA.endDate)) {
     return NextResponse.json({ error: "Invalid rangeA" }, { status: 400 });

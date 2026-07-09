@@ -5,6 +5,9 @@ import MetaPicker from "./MetaPicker";
 import {
   CHART_TYPES,
   FILTER_MATCHES,
+  MAX_DIMENSIONS,
+  MAX_METRICS,
+  configDimensions,
   type FilterClause,
   type MetadataResponse,
   type PropertySummary,
@@ -49,6 +52,11 @@ export default function ReportEditor({
 }: Props) {
   const set = (patch: Partial<ReportConfig>) => onChange({ ...config, ...patch });
   const filters = config.filters ?? [];
+  const dims = configDimensions(config);
+  const setDims = (next: string[]) =>
+    set({ dimensions: next.slice(0, MAX_DIMENSIONS), dimension: next[0] ?? "" });
+  const toggleDim = (d: string) =>
+    setDims(dims.includes(d) ? dims.filter((x) => x !== d) : [...dims, d]);
 
   const setFilter = (i: number, patch: Partial<FilterClause>) => {
     const next = filters.map((f, idx) => (idx === i ? { ...f, ...patch } : f));
@@ -101,7 +109,7 @@ export default function ReportEditor({
       </div>
 
       <div>
-        <label className={labelCls}>Metrics (up to 5)</label>
+        <label className={labelCls}>Metrics (up to {MAX_METRICS})</label>
         <MetaPicker
           items={metadata?.metrics ?? []}
           selected={config.metrics}
@@ -109,24 +117,24 @@ export default function ReportEditor({
             set({
               metrics: config.metrics.includes(m)
                 ? config.metrics.filter((x) => x !== m)
-                : [...config.metrics, m].slice(0, 5),
+                : [...config.metrics, m].slice(0, MAX_METRICS),
             })
           }
-          max={5}
+          max={MAX_METRICS}
           placeholder="Pick metrics"
         />
       </div>
 
       <div>
-        <label className={labelCls}>Break down by</label>
+        <label className={labelCls}>Break down by (up to {MAX_DIMENSIONS})</label>
         <div className="mb-2 flex flex-wrap gap-1.5">
           {QUICK_DIMS.map((q) => (
             <button
               key={q.dim}
               type="button"
-              onClick={() => set({ dimension: config.dimension === q.dim ? "" : q.dim })}
+              onClick={() => toggleDim(q.dim)}
               className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                config.dimension === q.dim
+                dims.includes(q.dim)
                   ? "border-[#6ae499] bg-[#6ae499]/10 text-[#6ae499]"
                   : "border-white/10 text-[#7f959d] hover:border-white/25 hover:text-[#c2d1d5]"
               }`}
@@ -137,12 +145,18 @@ export default function ReportEditor({
         </div>
         <MetaPicker
           items={metadata?.dimensions ?? []}
-          selected={config.dimension ? [config.dimension] : []}
-          onToggle={(d) => set({ dimension: config.dimension === d ? "" : d })}
-          max={1}
-          placeholder="Any dimension"
+          selected={dims}
+          onToggle={toggleDim}
+          max={MAX_DIMENSIONS}
+          placeholder="Any dimensions"
           allowNone
         />
+        {dims.length > 1 && dims.includes("date") && config.rangeB.preset !== "none" && (
+          <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
+            Day-aligned comparison overlays need Date as the only breakdown — with extra dimensions,
+            previous-period values pair only where the other values match.
+          </p>
+        )}
       </div>
 
       <div>

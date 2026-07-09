@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveCompare, resolveRange } from "./dates";
-import type { ReportConfig, ReportResponse } from "./types";
+import { configDimensions, type ReportConfig, type ReportResponse } from "./types";
 
 /** Fetch report data whenever the query-relevant parts of the config change. */
 export function useReport(config: ReportConfig | null) {
@@ -13,8 +13,8 @@ export function useReport(config: ReportConfig | null) {
 
   const queryKey = useMemo(() => {
     if (!config) return "";
-    const { property, dimension, metrics, rangeA, rangeB, filters, limit } = config;
-    return JSON.stringify({ property, dimension, metrics, rangeA, rangeB, filters, limit });
+    const { property, metrics, rangeA, rangeB, filters, limit } = config;
+    return JSON.stringify({ property, dims: configDimensions(config), metrics, rangeA, rangeB, filters, limit });
   }, [config]);
 
   useEffect(() => {
@@ -31,7 +31,7 @@ export function useReport(config: ReportConfig | null) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         property: config.property,
-        dimension: config.dimension,
+        dimensions: configDimensions(config),
         metrics: config.metrics,
         rangeA: a,
         rangeB: b,
@@ -71,6 +71,7 @@ export function defaultReport(property: string): ReportConfig {
     description: "",
     property,
     dimension: "",
+    dimensions: [],
     metrics: [],
     chartType: "line",
     rangeA: { preset: "last28" },

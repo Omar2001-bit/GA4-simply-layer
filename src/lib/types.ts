@@ -60,13 +60,18 @@ export interface FilterClause {
   not?: boolean;
 }
 
+// GA4 Data API hard limits per runReport request
+export const MAX_METRICS = 10;
+export const MAX_DIMENSIONS = 9;
+
 export interface ReportConfig {
   id: string;
   name: string;
   description?: string;
   property: string; // e.g. "properties/413595793"
-  dimension: string; // GA4 dimension apiName, "" = totals only
-  metrics: string[]; // GA4 metric apiNames (1-5)
+  dimension: string; // legacy single dimension — kept for old saved presets
+  dimensions?: string[]; // GA4 dimension apiNames (0-9); [] = totals only
+  metrics: string[]; // GA4 metric apiNames (1-10)
   chartType: ChartType;
   rangeA: DateRangeSel; // current / "after"
   rangeB: CompareSel; // comparison / "before"
@@ -74,6 +79,12 @@ export interface ReportConfig {
   limit: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Normalized dimension list — reads new `dimensions` or falls back to legacy `dimension`. */
+export function configDimensions(c: Pick<ReportConfig, "dimension" | "dimensions">): string[] {
+  if (c.dimensions) return c.dimensions.slice(0, MAX_DIMENSIONS);
+  return c.dimension ? [c.dimension] : [];
 }
 
 export interface PresetsFile {
@@ -90,7 +101,8 @@ export interface ResolvedRange {
 
 export interface ReportRequest {
   property: string;
-  dimension: string;
+  dimension?: string; // legacy
+  dimensions?: string[];
   metrics: string[];
   rangeA: ResolvedRange;
   rangeB?: ResolvedRange | null;
@@ -108,7 +120,8 @@ export interface ReportRow {
 export interface ReportResponse {
   metrics: string[];
   metricHeaders: { name: string; type: string }[];
-  dimension: string;
+  dimension: string; // first dimension ("" = totals only) — kept for existing consumers
+  dimensions: string[]; // all requested dimensions in order
   rows: ReportRow[];
   totalsA: number[];
   totalsB?: number[];

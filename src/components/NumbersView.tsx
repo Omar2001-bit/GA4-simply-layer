@@ -57,7 +57,9 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
 
 export default function NumbersView({ data, metricsMeta }: Props) {
   const hasCompare = !!data.rangeB;
-  const hasDim = !!data.dimension && data.rows.length > 0 && data.rows[0].dim !== "total";
+  const dimList = data.dimensions ?? (data.dimension ? [data.dimension] : []);
+  const isPureDate = dimList.join() === "date";
+  const hasDim = dimList.length > 0 && data.rows.length > 0 && data.rows[0].dim !== "total";
   return (
     <div className="space-y-4">
       <KpiCards data={data} metricsMeta={metricsMeta} />
@@ -66,7 +68,7 @@ export default function NumbersView({ data, metricsMeta }: Props) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-[#7f959d]">
-                <th className="px-4 py-3 font-medium">{humanize(data.dimension)}</th>
+                <th className="px-4 py-3 font-medium">{dimList.map(humanize).join(" · ")}</th>
                 {data.metrics.map((m, i) => (
                   <th key={m} className="px-4 py-3 text-right font-medium" colSpan={hasCompare ? 3 : 1}>
                     {metricLabel(m, metricsMeta)}
@@ -86,7 +88,7 @@ export default function NumbersView({ data, metricsMeta }: Props) {
               {data.rows.map((r, ri) => (
                 <tr key={`${r.dim}-${ri}`} className="border-b border-white/5 last:border-0 hover:bg-white/[0.03]">
                   <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c2d1d5]">
-                    {data.dimension === "date" ? fmtDateLabel(r.dim) : r.dim || "(not set)"}
+                    {isPureDate ? fmtDateLabel(r.dim) : r.dim || "(not set)"}
                     {r.bDim && (
                       <span className="ml-2 text-xs text-[#7f959d]">vs {fmtDateLabel(r.bDim)}</span>
                     )}

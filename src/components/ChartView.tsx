@@ -50,7 +50,7 @@ interface Datum {
 }
 
 function buildData(data: ReportResponse, metricIndex: number): Datum[] {
-  const isDate = data.dimension === "date";
+  const isDate = (data.dimensions ?? [data.dimension]).join() === "date";
   return data.rows.map((r) => ({
     name: isDate ? fmtDateLabel(r.dim) : r.dim || "(not set)",
     bName: r.bDim ? fmtDateLabel(r.bDim) : undefined,
