@@ -191,12 +191,12 @@ export default function ReportCanvas({
                       </span>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                     {config.metrics.length > 1 && (
                       <select
                         value={metricIndex}
                         onChange={(e) => setMetricIndex(Number(e.target.value))}
-                        className="rounded-lg border border-white/10 bg-[#081219] px-2 py-1 text-xs text-white outline-none transition-colors focus:border-[#6ae499]"
+                        className="max-w-full rounded-lg border border-white/10 bg-[#081219] px-2 py-1 text-xs text-white outline-none transition-colors focus:border-[#6ae499]"
                       >
                         {config.metrics.map((m, i) => (
                           <option key={m} value={i}>
@@ -205,21 +205,23 @@ export default function ReportCanvas({
                         ))}
                       </select>
                     )}
-                    <div className="flex overflow-hidden rounded-lg border border-white/10">
-                      {CHART_TYPES.filter((c) => c.value !== "table" && c.value !== "scorecard").map((c) => (
-                        <button
-                          key={c.value}
-                          type="button"
-                          onClick={() => setChartType(c.value)}
-                          className={`px-2.5 py-1 text-xs transition-colors ${
-                            chartType === c.value
-                              ? "bg-[#6ae499] text-[#0e1c26]"
-                              : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
-                          }`}
-                        >
-                          {c.label}
-                        </button>
-                      ))}
+                    <div className="max-w-full overflow-x-auto">
+                      <div className="flex w-max overflow-hidden rounded-lg border border-white/10">
+                        {CHART_TYPES.filter((c) => c.value !== "table" && c.value !== "scorecard").map((c) => (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => setChartType(c.value)}
+                            className={`whitespace-nowrap px-2.5 py-1.5 text-xs transition-colors ${
+                              chartType === c.value
+                                ? "bg-[#6ae499] text-[#0e1c26]"
+                                : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
+                            }`}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -40,7 +40,7 @@ export default function DashboardCard({ report, globalRangeA, globalRangeB }: Pr
         </div>
         <Link
           href={`/report/${report.id}`}
-          className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-[#7f959d] opacity-0 transition-opacity hover:border-white/25 hover:text-white group-hover:opacity-100"
+          className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-[#7f959d] transition-opacity hover:border-white/25 hover:text-white sm:opacity-0 sm:group-hover:opacity-100"
         >
           Zoom in ↗
         </Link>

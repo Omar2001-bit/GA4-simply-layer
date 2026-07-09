@@ -22,8 +22,13 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
   const maxDate = maxSelectableDate(); // GA4 has no future data — cap every picker at yesterday
 
   return (
-    <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${compact ? "text-xs" : "text-sm"}`}>
+    <div
+      className={`flex flex-col gap-y-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 ${
+        compact ? "text-xs" : "text-sm"
+      }`}
+    >
       {/* Current period */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
       <span className="flex items-center gap-1.5">
         <span className="inline-block h-2 w-2 rounded-full" style={{ background: SERIES_A }} />
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">Current</span>
@@ -65,14 +70,16 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
           />
         </span>
       ) : (
-        <span className="tabular-nums text-[#7f959d]">
+        <span className="text-xs tabular-nums text-[#7f959d] sm:text-sm">
           {resolvedA.startDate} → {resolvedA.endDate}
         </span>
       )}
+      </div>
 
       <span className="hidden h-4 w-px bg-white/10 sm:inline-block" />
 
       {/* Previous period */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
       <span className="flex items-center gap-1.5">
         <span
           className="inline-block h-2 w-2 rounded-full"
@@ -120,11 +127,12 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
         </span>
       ) : (
         resolvedB && (
-          <span className="tabular-nums text-[#7f959d]">
+          <span className="text-xs tabular-nums text-[#7f959d] sm:text-sm">
             {resolvedB.startDate} → {resolvedB.endDate}
           </span>
         )
       )}
+      </div>
     </div>
   );
 }

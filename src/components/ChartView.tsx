@@ -226,7 +226,7 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
               type="category"
               dataKey="name"
               tick={{ ...axisTick, fill: INK_SECONDARY }}
-              width={compact ? 80 : 140}
+              width={compact ? 80 : 120}
               stroke={BASELINE}
             />
             <Tooltip
