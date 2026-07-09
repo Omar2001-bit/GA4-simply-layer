@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPARE_PRESETS, RANGE_PRESETS, resolveCompare, resolveRange } from "@/lib/dates";
+import { COMPARE_PRESETS, RANGE_PRESETS, maxSelectableDate, resolveCompare, resolveRange } from "@/lib/dates";
 import { SERIES_A, SERIES_B } from "@/lib/theme";
 import type { CompareSel, DateRangeSel } from "@/lib/types";
 
@@ -19,6 +19,7 @@ const dateCls =
 export default function DateControls({ rangeA, rangeB, onChange, compact }: Props) {
   const resolvedA = resolveRange(rangeA);
   const resolvedB = resolveCompare(rangeB, resolvedA);
+  const maxDate = maxSelectableDate(); // GA4 has no future data — cap every picker at yesterday
 
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${compact ? "text-xs" : "text-sm"}`}>
@@ -50,6 +51,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
             type="date"
             className={dateCls}
             value={rangeA.start ?? resolvedA.startDate}
+            max={rangeA.end ?? resolvedA.endDate}
             onChange={(e) => onChange({ ...rangeA, start: e.target.value }, rangeB)}
           />
           <span className="text-[#7f959d]">→</span>
@@ -57,6 +59,8 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
             type="date"
             className={dateCls}
             value={rangeA.end ?? resolvedA.endDate}
+            min={rangeA.start ?? resolvedA.startDate}
+            max={maxDate}
             onChange={(e) => onChange({ ...rangeA, end: e.target.value }, rangeB)}
           />
         </span>
@@ -101,6 +105,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
             type="date"
             className={dateCls}
             value={rangeB.start ?? resolvedB?.startDate ?? ""}
+            max={rangeB.end ?? resolvedB?.endDate ?? maxDate}
             onChange={(e) => onChange(rangeA, { ...rangeB, start: e.target.value })}
           />
           <span className="text-[#7f959d]">→</span>
@@ -108,6 +113,8 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
             type="date"
             className={dateCls}
             value={rangeB.end ?? resolvedB?.endDate ?? ""}
+            min={rangeB.start ?? resolvedB?.startDate ?? undefined}
+            max={maxDate}
             onChange={(e) => onChange(rangeA, { ...rangeB, end: e.target.value })}
           />
         </span>

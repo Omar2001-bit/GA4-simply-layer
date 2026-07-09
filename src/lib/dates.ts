@@ -13,6 +13,19 @@ function addDays(d: Date, n: number): Date {
   return c;
 }
 
+/** Latest date with (mostly) complete GA4 data — yesterday. Used as the ceiling everywhere. */
+export function maxSelectableDate(today = new Date()): string {
+  return fmt(addDays(today, -1));
+}
+
+/** Clamp a custom start/end pair: nothing past yesterday, start never after end. */
+function clampCustom(start: string, end: string, ceiling: string): { start: string; end: string } {
+  let e = end > ceiling ? ceiling : end;
+  let s = start > ceiling ? ceiling : start;
+  if (s > e) s = e;
+  return { start: s, end: e };
+}
+
 /** Resolve a range selection to concrete YYYY-MM-DD dates. GA4 data lags ~1 day, so "last N" ends yesterday. */
 export function resolveRange(sel: DateRangeSel, today = new Date()): ResolvedRange {
   const yesterday = addDays(today, -1);
@@ -36,8 +49,15 @@ export function resolveRange(sel: DateRangeSel, today = new Date()): ResolvedRan
       const end = new Date(today.getFullYear(), today.getMonth(), 0);
       return { startDate: fmt(start), endDate: fmt(end) };
     }
-    case "custom":
-      return { startDate: sel.start || fmt(addDays(yesterday, -27)), endDate: sel.end || fmt(yesterday) };
+    case "custom": {
+      const ceiling = fmt(yesterday);
+      const raw = {
+        start: sel.start || fmt(addDays(yesterday, -27)),
+        end: sel.end || ceiling,
+      };
+      const c = clampCustom(raw.start, raw.end, ceiling);
+      return { startDate: c.start, endDate: c.end };
+    }
   }
 }
 
@@ -45,7 +65,9 @@ export function resolveRange(sel: DateRangeSel, today = new Date()): ResolvedRan
 export function resolveCompare(sel: CompareSel, rangeA: ResolvedRange): ResolvedRange | null {
   if (sel.preset === "none") return null;
   if (sel.preset === "custom") {
-    return { startDate: sel.start || rangeA.startDate, endDate: sel.end || rangeA.endDate };
+    const ceiling = maxSelectableDate();
+    const c = clampCustom(sel.start || rangeA.startDate, sel.end || rangeA.endDate, ceiling);
+    return { startDate: c.start, endDate: c.end };
   }
   const start = new Date(rangeA.startDate + "T00:00:00");
   const end = new Date(rangeA.endDate + "T00:00:00");
