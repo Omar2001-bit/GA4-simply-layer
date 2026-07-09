@@ -116,7 +116,10 @@ const MATCH_MAP: Record<string, string> = {
   exact: "EXACT",
   begins: "BEGINS_WITH",
   ends: "ENDS_WITH",
-  regex: "FULL_REGEXP",
+  // PARTIAL_REGEXP behaves like grep — matches anywhere in the value.
+  // (FULL_REGEXP requires the regex to consume the entire string, which
+  // silently matches nothing for the patterns people actually type.)
+  regex: "PARTIAL_REGEXP",
 };
 
 function buildDimensionFilter(filters: ReportRequest["filters"]) {

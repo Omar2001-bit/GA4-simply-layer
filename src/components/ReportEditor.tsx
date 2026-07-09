@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import MetaPicker from "./MetaPicker";
 import {
   CHART_TYPES,
@@ -53,6 +54,25 @@ export default function ReportEditor({
     const next = filters.map((f, idx) => (idx === i ? { ...f, ...patch } : f));
     set({ filters: next });
   };
+
+  // real dimension values (event names, channels, countries…) for filter-value suggestions
+  const [valueSuggestions, setValueSuggestions] = useState<Record<string, string[]>>({});
+  const filterFields = filters.map((f) => f.field).filter(Boolean).join(",");
+  useEffect(() => {
+    const fields = filterFields ? filterFields.split(",") : [];
+    for (const field of fields) {
+      if (valueSuggestions[field]) continue;
+      fetch(`/api/values?property=${config.property}&dimension=${encodeURIComponent(field)}`)
+        .then((r) => r.json())
+        .then((j) => {
+          if (Array.isArray(j.values)) {
+            setValueSuggestions((prev) => ({ ...prev, [field]: j.values }));
+          }
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterFields, config.property]);
 
   return (
     <aside className="w-full shrink-0 space-y-5 rounded-2xl border border-white/10 bg-[#0e1c26] p-5 lg:w-[21rem]">
@@ -153,8 +173,16 @@ export default function ReportEditor({
                   className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#0e1c26] px-2 py-1.5 text-xs text-white outline-none focus:border-[#6ae499]"
                   placeholder="Value (e.g. purchase)"
                   value={f.value}
+                  list={f.field ? `values-${f.field}` : undefined}
                   onChange={(e) => setFilter(i, { value: e.target.value })}
                 />
+                {f.field && valueSuggestions[f.field] && (
+                  <datalist id={`values-${f.field}`}>
+                    {valueSuggestions[f.field].map((v) => (
+                      <option key={v} value={v} />
+                    ))}
+                  </datalist>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[#7f959d]">
