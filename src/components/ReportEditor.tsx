@@ -11,7 +11,6 @@ import {
   COLOR_PERIOD_PALETTE,
   FILTER_MATCHES,
   MAX_DIMENSIONS,
-  MAX_METRICS,
   configDimensions,
   isConvRateMetric,
   isEventMetric,
@@ -141,7 +140,7 @@ export default function ReportEditor({
     set({
       metrics: config.metrics.includes(m)
         ? config.metrics.filter((x) => x !== m)
-        : [...config.metrics, m].slice(0, MAX_METRICS),
+        : [...config.metrics, m],
     });
 
   // A render-time `Date.now() - savedAt < 4000` check only hides the badge if
@@ -201,18 +200,18 @@ export default function ReportEditor({
       </div>
 
       <div>
-        <label className={labelCls}>Metrics (up to {MAX_METRICS})</label>
+        <label className={labelCls}>Metrics</label>
         <MetaPicker
           items={metadata?.metrics ?? []}
           selected={config.metrics.filter((m) => !isEventMetric(m) && !isConvRateMetric(m))}
           onToggle={toggleMetric}
-          max={MAX_METRICS}
+          max={Infinity}
           placeholder="Pick metrics"
         />
       </div>
 
       <div>
-        <label className={labelCls}>Event counts (shares the {MAX_METRICS}-metric limit above)</label>
+        <label className={labelCls}>Event counts</label>
         <MetaPicker
           items={(eventNames ?? []).map((n) => ({
             apiName: makeEventMetric(n),
@@ -221,7 +220,7 @@ export default function ReportEditor({
           }))}
           selected={config.metrics.filter(isEventMetric)}
           onToggle={toggleMetric}
-          max={MAX_METRICS}
+          max={Infinity}
           placeholder={eventNames === null ? "Loading events…" : eventNames.length === 0 ? "No events found" : "Pick events to count"}
         />
         <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
@@ -231,7 +230,7 @@ export default function ReportEditor({
       </div>
 
       <div>
-        <label className={labelCls}>Conversion rates (shares the {MAX_METRICS}-metric limit above)</label>
+        <label className={labelCls}>Conversion rates</label>
         <MetaPicker
           items={(eventNames ?? []).flatMap((n) => [
             { apiName: makeConvRateMetric(n, "totalUsers"), uiName: `${humanizeEvent(n)} → per user`, category: "Conversion" },
@@ -239,7 +238,7 @@ export default function ReportEditor({
           ])}
           selected={config.metrics.filter(isConvRateMetric)}
           onToggle={toggleMetric}
-          max={MAX_METRICS}
+          max={Infinity}
           placeholder={eventNames === null ? "Loading events…" : "Pick a conversion rate"}
         />
         <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">

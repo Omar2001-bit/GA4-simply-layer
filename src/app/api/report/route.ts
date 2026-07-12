@@ -16,8 +16,12 @@ export async function POST(req: Request) {
   if (!body.property || !/^properties\/\d+$/.test(body.property)) {
     return NextResponse.json({ error: "Invalid property" }, { status: 400 });
   }
-  if (!Array.isArray(body.metrics) || body.metrics.length === 0 || body.metrics.length > 10) {
-    return NextResponse.json({ error: "Between 1 and 10 metrics required (GA4 limit)" }, { status: 400 });
+  // No product-level cap on metric count — runReport chunks batches of 10
+  // (GA4's own per-request limit) and merges them. 200 here is just a sanity
+  // ceiling against a malformed/abusive payload, not a real constraint —
+  // GA4's entire metric catalog is smaller than that.
+  if (!Array.isArray(body.metrics) || body.metrics.length === 0 || body.metrics.length > 200) {
+    return NextResponse.json({ error: "Between 1 and 200 metrics required" }, { status: 400 });
   }
   if (body.dimensions && (!Array.isArray(body.dimensions) || body.dimensions.length > 9)) {
     return NextResponse.json({ error: "At most 9 dimensions (GA4 limit)" }, { status: 400 });

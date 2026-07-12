@@ -177,11 +177,103 @@ function readGranularityKey(
   return dvals[gIdxs[0]]?.value ?? ""; // date and month: GA4's own value already matches
 }
 
+// GA4's own hard cap — not a limit this app imposes. runCoreReport chunks
+// arbitrarily many metrics into batches of this size and merges the results,
+// so callers (and the UI) never have to think about it.
+const GA4_METRIC_CAP = 10;
+
+function chunkMetrics(metrics: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < metrics.length; i += GA4_METRIC_CAP) out.push(metrics.slice(i, i + GA4_METRIC_CAP));
+  return out.length ? out : [[]];
+}
+
+/** Restricts a later metric-chunk's query to exactly the dimension-value
+ *  combinations the FIRST chunk's own sort+limit already chose — otherwise
+ *  each chunk would independently rank rows by its own first metric and
+ *  every chunk beyond the first could return a different top-N row set,
+ *  silently misaligning columns that are supposed to describe the same row.
+ *  Not needed (and not called) for a pure time-series or totals-only
+ *  breakdown, where the row set is already canonical and identical across
+ *  every chunk by construction. */
+function buildRowRestrictFilter(dims: string[], dimValues: string[]): object | undefined {
+  if (!dimValues.length) return undefined;
+  if (dims.length === 1) {
+    return { filter: { fieldName: dims[0], inListFilter: { values: dimValues } } };
+  }
+  const expressions = dimValues.map((combo) => {
+    const parts = combo.split(" · ");
+    return {
+      andGroup: {
+        expressions: dims.map((d, i) => ({
+          filter: { fieldName: d, stringFilter: { matchType: "EXACT", value: parts[i] ?? "", caseSensitive: true } },
+        })),
+      },
+    };
+  });
+  return expressions.length === 1 ? expressions[0] : { orGroup: { expressions } };
+}
+
+/** Column-concatenates N metric-chunk responses (same dims/ranges/filters,
+ *  different metrics) into one. Rows are matched by dim+bDim key, not
+ *  position — chunk 2+ may legitimately come back in a different row order
+ *  than chunk 1 once a restrict filter is involved. */
+function mergeCoreReportChunks(first: ReportResponse, rest: ReportResponse[]): ReportResponse {
+  const all = [first, ...rest];
+  const hasCompare = !!first.totalsB;
+  const restMaps = rest.map((c) => new Map(c.rows.map((r) => [`${r.dim} ${r.bDim ?? ""}`, r])));
+  const rows = first.rows.map((r) => {
+    const key = `${r.dim} ${r.bDim ?? ""}`;
+    const a = [...r.a, ...rest.flatMap((c, i) => restMaps[i].get(key)?.a ?? c.metrics.map(() => 0))];
+    const b = hasCompare
+      ? [
+          ...(r.b ?? r.a.map(() => 0)),
+          ...rest.flatMap((c, i) => restMaps[i].get(key)?.b ?? restMaps[i].get(key)?.a ?? c.metrics.map(() => 0)),
+        ]
+      : undefined;
+    return { dim: r.dim, bDim: r.bDim, a, b };
+  });
+  return {
+    metrics: all.flatMap((c) => c.metrics),
+    metricHeaders: all.flatMap((c) => c.metricHeaders),
+    dimension: first.dimension,
+    dimensions: first.dimensions,
+    rows,
+    totalsA: all.flatMap((c) => c.totalsA),
+    totalsB: hasCompare ? all.flatMap((c) => c.totalsB ?? c.metrics.map(() => 0)) : undefined,
+    rangeA: first.rangeA,
+    rangeB: first.rangeB,
+    rowCount: first.rowCount,
+    currencyCode: first.currencyCode,
+  };
+}
+
 /** Core report fetch — assumes `req.metrics` are all real GA4 metric apiNames
- *  (event:* virtual metrics are resolved separately, see runEventPivot). */
+ *  (event:* virtual metrics are resolved separately, see runEventPivot). Any
+ *  number of metrics is supported: batches of GA4_METRIC_CAP run as separate
+ *  requests and merge back into one response. */
 async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
-  // GA4 caps: 9 dimensions, 10 metrics per request
+  // GA4 caps dimensions at 9 per request; metrics are chunked below instead of capped.
   const dims = (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
+  const chunks = chunkMetrics(req.metrics);
+  const first = await runCoreReportChunk(req, chunks[0], dims);
+  if (chunks.length === 1) return first;
+
+  const granularity = detectGranularity(dims);
+  // categorical (non-time-series) breakdown: chunk 1's sort+limit picked a
+  // specific top-N row set — pin every later chunk to that exact set.
+  const needsRestrict = dims.length > 0 && !granularity;
+  const restrictFilter = needsRestrict ? buildRowRestrictFilter(dims, first.rows.map((r) => r.dim)) : undefined;
+  const rest = await Promise.all(chunks.slice(1).map((m) => runCoreReportChunk(req, m, dims, restrictFilter)));
+  return mergeCoreReportChunks(first, rest);
+}
+
+async function runCoreReportChunk(
+  req: ReportRequest,
+  metricsChunk: string[],
+  dims: string[],
+  extraFilter?: object
+): Promise<ReportResponse> {
   const hasDim = dims.length > 0;
   // dims exactly matching one granularity's dim-set ("date", or
   // ["isoYear","isoWeek"], or ["yearMonth"]) is a pure time series — eligible
@@ -190,9 +282,9 @@ async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
   const granularity = detectGranularity(dims);
   const isDateOnly = granularity !== null;
   const hasCompare = !!req.rangeB;
-  const metrics = req.metrics.slice(0, 10).map((m) => ({ name: m }));
+  const metrics = metricsChunk.map((m) => ({ name: m }));
   const dimensions = dims.map((d) => ({ name: d }));
-  const dimensionFilter = buildDimensionFilter(req.filters);
+  const dimensionFilter = combineFilters(buildDimensionFilter(req.filters), extraFilter);
 
   const body: Record<string, unknown> = {
     dateRanges: hasCompare ? [req.rangeA, req.rangeB] : [req.rangeA],
@@ -207,7 +299,7 @@ async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
   if (granularity) {
     body.orderBys = granularityDims(granularity).map((d) => ({ dimension: { dimensionName: d } }));
   } else if (hasDim) {
-    body.orderBys = [{ metric: { metricName: req.metrics[0] }, desc: true }];
+    body.orderBys = [{ metric: { metricName: metricsChunk[0] }, desc: true }];
   }
 
   const data = await gaRequest<RawReport>(`${DATA_API}/${req.property}:runReport`, "POST", body);
@@ -310,7 +402,7 @@ async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
   }
 
   return {
-    metrics: req.metrics,
+    metrics: metricsChunk,
     metricHeaders,
     dimension: dims[0] ?? "",
     dimensions: dims,
@@ -603,7 +695,7 @@ function mergeReports(
  *  metrics referencing the same event — then everything merges back into
  *  the caller's original metric order. */
 export async function runReport(req: ReportRequest): Promise<ReportResponse> {
-  const rawMetrics = req.metrics.slice(0, 10);
+  const rawMetrics = req.metrics;
   const realMetrics = rawMetrics.filter((m) => !isEventMetric(m) && !isConvRateMetric(m));
   const convRateMetrics = rawMetrics.filter(isConvRateMetric);
   const eventNames = [

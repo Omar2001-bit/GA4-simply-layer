@@ -27,9 +27,15 @@ export type RangePreset =
   | "last90"
   | "thisMonth"
   | "lastMonth"
+  | "since" // fixed start, end always rolls forward to yesterday
   | "custom";
 
-export type ComparePreset = "previousPeriod" | "samePeriodLastYear" | "custom" | "none";
+export type ComparePreset =
+  | "previousPeriod"
+  | "samePeriodLastYear"
+  | "fixedEnd" // fixed end, same length as the current period — grows backward as it does
+  | "custom"
+  | "none";
 
 export interface DateRangeSel {
   preset: RangePreset;

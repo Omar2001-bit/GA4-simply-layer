@@ -49,12 +49,13 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
           value={rangeB.preset}
           onChange={(e) => {
             const preset = e.target.value as CompareSel["preset"];
-            onChange(
-              rangeA,
+            const next: CompareSel =
               preset === "custom" && resolvedB
                 ? { preset, start: resolvedB.startDate, end: resolvedB.endDate }
-                : { preset }
-            );
+                : preset === "fixedEnd"
+                  ? { preset, end: resolvedB?.endDate ?? resolvedA.endDate }
+                  : { preset };
+            onChange(rangeA, next);
           }}
         >
           {COMPARE_PRESETS.map((p) => (
@@ -78,6 +79,21 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
               ref={endBRef}
               value={capMax(rangeB.end ?? resolvedB?.endDate ?? maxDate)}
               min={rangeB.start ?? resolvedB?.startDate}
+              max={maxDate}
+              onSelect={(date) => onChange(rangeA, { ...rangeB, end: date })}
+            />
+          </span>
+        ) : rangeB.preset === "fixedEnd" ? (
+          <span className="flex items-center gap-1.5">
+            <span
+              className="text-xs tabular-nums text-[#7f959d] sm:text-sm"
+              title="Grows backward automatically to always match the current period's length"
+            >
+              {resolvedB?.startDate}
+            </span>
+            <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+            <DatePicker
+              value={capMax(rangeB.end ?? resolvedB?.endDate ?? maxDate)}
               max={maxDate}
               onSelect={(date) => onChange(rangeA, { ...rangeB, end: date })}
             />
@@ -106,10 +122,13 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
           value={rangeA.preset}
           onChange={(e) => {
             const preset = e.target.value as DateRangeSel["preset"];
-            onChange(
-              preset === "custom" ? { preset, start: resolvedA.startDate, end: resolvedA.endDate } : { preset },
-              rangeB
-            );
+            const next: DateRangeSel =
+              preset === "custom"
+                ? { preset, start: resolvedA.startDate, end: resolvedA.endDate }
+                : preset === "since"
+                  ? { preset, start: resolvedA.startDate }
+                  : { preset };
+            onChange(next, rangeB);
           }}
         >
           {RANGE_PRESETS.map((p) => (
@@ -137,6 +156,18 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
               align="right"
               onSelect={(date) => onChange({ ...rangeA, end: date }, rangeB)}
             />
+          </span>
+        ) : rangeA.preset === "since" ? (
+          <span className="flex items-center gap-1.5">
+            <DatePicker
+              value={capMax(rangeA.start ?? resolvedA.startDate)}
+              max={maxDate}
+              onSelect={(date) => onChange({ ...rangeA, start: date }, rangeB)}
+            />
+            <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+            <span className="text-xs tabular-nums text-[#7f959d] sm:text-sm" title="Always rolls forward to yesterday">
+              {resolvedA.endDate}
+            </span>
           </span>
         ) : (
           <span className="flex items-center gap-1.5 text-xs tabular-nums text-[#7f959d] sm:text-sm">

@@ -217,6 +217,13 @@ export function resolveRange(sel: DateRangeSel, today = new Date()): ResolvedRan
       const c = clampCustom(raw.start, raw.end, ceiling);
       return { startDate: c.start, endDate: c.end };
     }
+    case "since": {
+      // fixed start, end always tracks yesterday — grows a day longer every
+      // day the report is viewed, instead of a fixed-length rolling window.
+      const ceiling = fmt(yesterday);
+      const start = sel.start || fmt(addDays(yesterday, -27));
+      return { startDate: start > ceiling ? ceiling : start, endDate: ceiling };
+    }
   }
 }
 
@@ -230,6 +237,7 @@ export function resolveCompare(sel: CompareSel, rangeA: ResolvedRange): Resolved
   }
   const start = new Date(rangeA.startDate + "T00:00:00");
   const end = new Date(rangeA.endDate + "T00:00:00");
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
   if (sel.preset === "samePeriodLastYear") {
     const s = new Date(start);
     s.setFullYear(s.getFullYear() - 1);
@@ -237,8 +245,17 @@ export function resolveCompare(sel: CompareSel, rangeA: ResolvedRange): Resolved
     e.setFullYear(e.getFullYear() - 1);
     return { startDate: fmt(s), endDate: fmt(e) };
   }
+  if (sel.preset === "fixedEnd") {
+    // Same length as A, always ending at this fixed anchor date. As A grows
+    // (e.g. a "since" current period picking up a new day), this grows
+    // backward from ITS OWN end to match — unlike previousPeriod, which
+    // tracks immediately-before A's start rather than a pinned end date, so
+    // it can't leave a fixed gap between the two periods.
+    const endDate = sel.end || fmt(addDays(start, -1));
+    const endD = new Date(endDate + "T00:00:00");
+    return { startDate: fmt(addDays(endD, -(days - 1))), endDate };
+  }
   // previousPeriod: same length, immediately before A
-  const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
   return { startDate: fmt(addDays(start, -days)), endDate: fmt(addDays(start, -1)) };
 }
 
@@ -250,12 +267,14 @@ export const RANGE_PRESETS: { value: string; label: string }[] = [
   { value: "last90", label: "Last 90 days" },
   { value: "thisMonth", label: "This month" },
   { value: "lastMonth", label: "Last month" },
+  { value: "since", label: "Since date (rolls forward daily)" },
   { value: "custom", label: "Custom" },
 ];
 
 export const COMPARE_PRESETS: { value: string; label: string }[] = [
   { value: "previousPeriod", label: "Previous period" },
   { value: "samePeriodLastYear", label: "Same period last year" },
+  { value: "fixedEnd", label: "Fixed baseline (grows to match)" },
   { value: "custom", label: "Custom" },
   { value: "none", label: "No comparison" },
 ];
