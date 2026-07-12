@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartLineUpIcon } from "@phosphor-icons/react";
 import {
   Area,
   AreaChart,
@@ -12,12 +13,14 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { fmtCompact, fmtDateLabel, fmtDelta, fmtValue, deltaPct, humanize } from "@/lib/format";
+import { bucketDayCount, bucketOverlapsRange, detectGranularity, type TimeGranularity } from "@/lib/dates";
+import { fmtBucketLabel, fmtCompact, fmtDelta, fmtValue, deltaPct, humanize, humanizeEvent } from "@/lib/format";
 import {
   BASELINE,
   CATEGORICAL,
@@ -31,12 +34,24 @@ import {
   SERIES_B,
   SURFACE,
 } from "@/lib/theme";
-import type { ChartType, ReportResponse } from "@/lib/types";
+import {
+  convRateDenom,
+  convRateEventName,
+  eventMetricName,
+  isConvRateMetric,
+  isEventMetric,
+  type ChartType,
+  type ColorPeriod,
+  type MetaItem,
+  type ReportResponse,
+} from "@/lib/types";
 
 interface Props {
   data: ReportResponse;
   chartType: ChartType;
-  metricIndex: number; // which metric drives line/area/bar/pie
+  metricIndex: number; // which of data.metrics this chart plots
+  metricsMeta?: MetaItem[]; // pretty names for tooltip/labels
+  colorPeriods?: ColorPeriod[]; // named date-range highlights, see types.ts
   height?: number;
   compact?: boolean; // mini mode for dashboard cards
 }
@@ -44,19 +59,56 @@ interface Props {
 interface Datum {
   name: string;
   bName?: string;
+  key: string; // raw bucket key, pre-label-formatting — tooltip needs this for day-count math
+  bKey?: string;
   a: number;
   b?: number;
-  [k: string]: unknown;
 }
 
-function buildData(data: ReportResponse, metricIndex: number): Datum[] {
-  const isDate = (data.dimensions ?? [data.dimension]).join() === "date";
+export function metricLabel(apiName: string, meta?: MetaItem[]): string {
+  if (isConvRateMetric(apiName)) {
+    const denomLabel = convRateDenom(apiName) === "totalUsers" ? "per user" : "per session";
+    return `${humanizeEvent(convRateEventName(apiName))} → ${denomLabel}`;
+  }
+  if (isEventMetric(apiName)) return `${humanizeEvent(eventMetricName(apiName))} (event)`;
+  return meta?.find((m) => m.apiName === apiName)?.uiName ?? humanize(apiName);
+}
+
+function buildData(data: ReportResponse, metricIndex: number, granularity: TimeGranularity | null): Datum[] {
+  const g = granularity ?? "date";
   return data.rows.map((r) => ({
-    name: isDate ? fmtDateLabel(r.dim) : r.dim || "(not set)",
-    bName: r.bDim ? fmtDateLabel(r.bDim) : undefined,
+    name: fmtBucketLabel(g, r.dim),
+    bName: r.bDim ? fmtBucketLabel(g, r.bDim) : undefined,
+    key: r.dim,
+    bKey: r.bDim,
     a: r.a[metricIndex] ?? 0,
     b: r.b ? r.b[metricIndex] ?? 0 : undefined,
   }));
+}
+
+/** Which contiguous x-axis span (by row label) each color period covers, so
+ *  it can be shaded on the chart. First-matching period wins where two
+ *  periods overlap the same bucket, matching the PRD's own tie-break rule. */
+function periodBands(
+  rows: Datum[],
+  periods: ColorPeriod[] | undefined,
+  g: TimeGranularity | null
+): { period: ColorPeriod; x1: string; x2: string }[] {
+  if (!periods?.length || !g) return [];
+  const claimed = new Set<string>();
+  const bands: { period: ColorPeriod; x1: string; x2: string }[] = [];
+  for (const period of periods) {
+    let x1: string | null = null;
+    let x2: string | null = null;
+    for (const r of rows) {
+      if (!r.key || claimed.has(r.key) || !bucketOverlapsRange(g, r.key, period.startDate, period.endDate)) continue;
+      claimed.add(r.key);
+      if (x1 === null) x1 = r.name;
+      x2 = r.name;
+    }
+    if (x1 !== null && x2 !== null) bands.push({ period, x1, x2 });
+  }
+  return bands;
 }
 
 const tooltipStyle = {
@@ -97,22 +149,39 @@ export function PeriodChips({ data, compact }: { data: ReportResponse; compact?:
   );
 }
 
+/** Daily tooltips show the value only. Weekly/monthly show Total + Average +
+ *  how many underlying days fed that bucket (fewer than 7/full-month at a
+ *  range edge) — same distinction the PRD draws between the two. */
 function ChartTooltip({
   active,
   payload,
   label,
   metricType,
+  currencyCode,
   hasCompare,
+  granularity,
+  rangeA,
+  rangeB,
 }: {
   active?: boolean;
   payload?: { payload: Datum }[];
   label?: string;
   metricType?: string;
+  currencyCode?: string;
   hasCompare: boolean;
+  granularity: TimeGranularity | null;
+  rangeA: { startDate: string; endDate: string };
+  rangeB?: { startDate: string; endDate: string } | null;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   const delta = deltaPct(d.a, d.b);
+  const isBucketed = granularity !== null && granularity !== "date";
+  const countA = isBucketed && d.key ? bucketDayCount(granularity!, d.key, rangeA.startDate, rangeA.endDate) : 0;
+  const countB =
+    isBucketed && d.bKey && rangeB ? bucketDayCount(granularity!, d.bKey, rangeB.startDate, rangeB.endDate) : 0;
+  const avgA = countA > 0 ? d.a / countA : d.a;
+  const avgB = countB > 0 && d.b !== undefined ? d.b / countB : d.b;
   return (
     <div style={tooltipStyle} className="px-3 py-2 shadow-xl">
       <div style={{ color: INK_SECONDARY }} className="mb-1.5 font-semibold">
@@ -121,24 +190,37 @@ function ChartTooltip({
       <div className="flex items-center justify-between gap-4">
         <span className="flex items-center gap-1.5" style={{ color: INK_MUTED }}>
           <span style={{ background: SERIES_A }} className="inline-block h-2 w-2 rounded-full" />
-          Current
+          {isBucketed ? "Total" : "Current"}
         </span>
-        <span className="font-semibold tabular-nums">{fmtValue(d.a, metricType)}</span>
+        <span className="font-semibold tabular-nums">{fmtValue(d.a, metricType, currencyCode)}</span>
       </div>
+      {isBucketed && (
+        <div className="flex items-center justify-between gap-4 pl-3.5 text-[11px]" style={{ color: INK_SECONDARY }}>
+          <span>Average · {countA} day{countA === 1 ? "" : "s"}</span>
+          <span className="tabular-nums">{fmtValue(avgA, metricType, currencyCode)}</span>
+        </div>
+      )}
       {hasCompare && d.b !== undefined && (
         <>
-          <div className="flex items-center justify-between gap-4">
+          <div className="mt-1.5 flex items-center justify-between gap-4">
             <span className="flex items-center gap-1.5" style={{ color: INK_MUTED }}>
               <span
                 className="inline-block h-2 w-2 rounded-full"
                 style={{ border: `1.5px dashed ${SERIES_B}` }}
               />
-              Previous{d.bName ? ` · ${d.bName}` : ""}
+              {isBucketed ? "Previous total" : "Previous"}
+              {d.bName ? ` · ${d.bName}` : ""}
             </span>
             <span className="tabular-nums" style={{ color: INK_SECONDARY }}>
-              {fmtValue(d.b, metricType)}
+              {fmtValue(d.b, metricType, currencyCode)}
             </span>
           </div>
+          {isBucketed && avgB !== undefined && (
+            <div className="flex items-center justify-between gap-4 pl-3.5 text-[11px]" style={{ color: INK_MUTED }}>
+              <span>Average · {countB} day{countB === 1 ? "" : "s"}</span>
+              <span className="tabular-nums">{fmtValue(avgB, metricType, currencyCode)}</span>
+            </div>
+          )}
           <div
             style={{ color: delta !== null && delta < 0 ? DELTA_DOWN : DELTA_UP }}
             className="mt-1 text-right font-semibold"
@@ -151,33 +233,125 @@ function ChartTooltip({
   );
 }
 
-export default function ChartView({ data, chartType, metricIndex, height = 320, compact = false }: Props) {
-  const rows = buildData(data, metricIndex);
+/** Totals-only fallback (no time/dimension breakdown selected): a real trend
+ *  line needs more than one row, so show the metric as a number instead of a
+ *  broken single-point line. */
+function TotalsOnlyView({
+  data,
+  metricIndex,
+  metricsMeta,
+}: {
+  data: ReportResponse;
+  metricIndex: number;
+  metricsMeta?: MetaItem[];
+}) {
+  const a = data.totalsA[metricIndex] ?? 0;
+  const b = data.totalsB?.[metricIndex];
+  const type = data.metricHeaders[metricIndex]?.type;
+  const delta = deltaPct(a, b);
+  return (
+    <div className="animate-fade-in flex h-full min-h-[160px] flex-col items-center justify-center gap-2 px-4 text-center">
+      <div className="text-xs uppercase tracking-[0.1em]" style={{ color: INK_MUTED }}>
+        {metricLabel(data.metrics[metricIndex] ?? "", metricsMeta)}
+      </div>
+      <div style={{ color: INK }} className="text-3xl font-semibold tabular-nums">
+        {fmtValue(a, type, data.currencyCode)}
+      </div>
+      {delta !== null && (
+        <div style={{ color: delta < 0 ? DELTA_DOWN : DELTA_UP }} className="text-xs font-medium">
+          {fmtDelta(delta)} vs previous
+        </div>
+      )}
+      <p className="flex max-w-xs items-center gap-1.5 text-xs leading-snug" style={{ color: INK_MUTED }}>
+        <ChartLineUpIcon size={13} className="shrink-0" />
+        No trend to draw, add a breakdown to see this as a line.
+      </p>
+    </div>
+  );
+}
+
+export default function ChartView({
+  data,
+  chartType,
+  metricIndex,
+  metricsMeta,
+  colorPeriods,
+  height = 320,
+  compact = false,
+}: Props) {
   const metricType = data.metricHeaders[metricIndex]?.type;
   const metricName = data.metrics[metricIndex] ?? "";
   const hasCompare = !!data.rangeB;
   const axisTick = { fill: INK_MUTED, fontSize: compact ? 10 : 11 };
-  const yFmt = (v: number) => fmtCompact(v, metricType);
+  const yFmt = (v: number) => fmtCompact(v, metricType, data.currencyCode);
   const chips = <PeriodChips data={data} compact={compact} />;
 
-  if (chartType === "scorecard" || rows.length === 0) {
+  const dimList = data.dimensions?.length ? data.dimensions : data.dimension ? [data.dimension] : [];
+  const isTotalsOnly = dimList.length === 0 || (data.rows.length === 1 && data.rows[0]?.dim === "total");
+  const granularity = detectGranularity(dimList);
+  const chartTooltip = (
+    <ChartTooltip
+      metricType={metricType}
+      currencyCode={data.currencyCode}
+      hasCompare={hasCompare}
+      granularity={granularity}
+      rangeA={data.rangeA}
+      rangeB={data.rangeB}
+    />
+  );
+
+  if (chartType === "scorecard") {
     const a = data.totalsA[metricIndex] ?? 0;
     const b = data.totalsB?.[metricIndex];
     const delta = deltaPct(a, b);
     return (
       <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-1">
         <div style={{ color: INK_MUTED }} className="text-xs uppercase tracking-[0.14em]">
-          {humanize(metricName)}
+          {metricLabel(metricName, metricsMeta)}
         </div>
-        <div style={{ color: INK }} className="text-5xl font-semibold">
-          {fmtValue(a, metricType)}
+        <div style={{ color: INK }} className="text-5xl font-semibold tabular-nums">
+          {fmtValue(a, metricType, data.currencyCode)}
         </div>
         {delta !== null && (
           <div style={{ color: delta < 0 ? DELTA_DOWN : DELTA_UP }} className="text-sm font-medium">
-            {fmtDelta(delta)} vs previous ({fmtValue(b ?? 0, metricType)})
+            {fmtDelta(delta)} vs previous ({fmtValue(b ?? 0, metricType, data.currencyCode)})
           </div>
         )}
         {chips}
+      </div>
+    );
+  }
+
+  // No breakdown selected at all: nothing to plot a trend against. Show the
+  // metric as a number instead of the old single-dot broken line.
+  if (isTotalsOnly && (chartType === "line" || chartType === "area" || chartType === "bar" || chartType === "hbar")) {
+    return <TotalsOnlyView data={data} metricIndex={metricIndex} metricsMeta={metricsMeta} />;
+  }
+
+  const rows = buildData(data, metricIndex, granularity);
+  const bands = periodBands(rows, colorPeriods, granularity);
+  const bandAreas = bands.map(({ period, x1, x2 }) => (
+    <ReferenceArea
+      key={period.id}
+      x1={x1}
+      x2={x2}
+      fill={period.color}
+      fillOpacity={0.1}
+      stroke={period.color}
+      strokeOpacity={0.35}
+      ifOverflow="visible"
+      label={{ value: period.label, position: "insideTopLeft", fill: period.color, fontSize: 10 }}
+    />
+  ));
+
+  if (rows.length === 0) {
+    return (
+      <div
+        className="animate-fade-in flex h-full min-h-[160px] flex-col items-center justify-center gap-1.5 text-xs"
+        style={{ color: INK_MUTED }}
+      >
+        <ChartLineUpIcon size={18} />
+        No data for this range.
       </div>
     );
   }
@@ -188,7 +362,7 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
     const rest = rows.slice(8);
     const slices = [...top];
     if (rest.length) {
-      slices.push({ name: "Other", a: rest.reduce((s, r) => s + r.a, 0), b: undefined });
+      slices.push({ name: "Other", key: "", a: rest.reduce((s, r) => s + r.a, 0), b: undefined });
     }
     return (
       <ResponsiveContainer width="100%" height={height}>
@@ -207,7 +381,10 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
               <Cell key={s.name} fill={i < 8 ? CATEGORICAL[i % 8] : INK_MUTED} />
             ))}
           </Pie>
-          <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtValue(Number(v), metricType)} />
+          <Tooltip
+            contentStyle={tooltipStyle}
+            formatter={(v) => fmtValue(Number(v), metricType, data.currencyCode)}
+          />
           {!compact && <Legend wrapperStyle={{ color: INK_SECONDARY, fontSize: 12 }} />}
         </PieChart>
       </ResponsiveContainer>
@@ -229,10 +406,7 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
               width={compact ? 80 : 120}
               stroke={BASELINE}
             />
-            <Tooltip
-              content={<ChartTooltip metricType={metricType} hasCompare={hasCompare} />}
-              cursor={{ fill: "rgba(255,255,255,0.04)" }}
-            />
+            <Tooltip content={chartTooltip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
             <Bar dataKey="a" fill={SERIES_A} radius={[0, 4, 4, 0]} maxBarSize={18} />
             {hasCompare && (
               <Bar
@@ -259,12 +433,10 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
         <ResponsiveContainer width="100%" height={height}>
           <BarChart data={rows} margin={{ right: 12 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
+            {bandAreas}
             <XAxis dataKey="name" tick={axisTick} stroke={BASELINE} interval="preserveStartEnd" />
             <YAxis tick={axisTick} tickFormatter={yFmt} stroke={BASELINE} width={48} />
-            <Tooltip
-              content={<ChartTooltip metricType={metricType} hasCompare={hasCompare} />}
-              cursor={{ fill: "rgba(255,255,255,0.04)" }}
-            />
+            <Tooltip content={chartTooltip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
             <Bar dataKey="a" fill={SERIES_A} radius={[4, 4, 0, 0]} maxBarSize={22} />
             {hasCompare && (
               <Bar
@@ -297,10 +469,18 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
               </linearGradient>
             </defs>
             <CartesianGrid stroke={GRID} vertical={false} />
+            {bandAreas}
             <XAxis dataKey="name" tick={axisTick} stroke={BASELINE} interval="preserveStartEnd" />
             <YAxis tick={axisTick} tickFormatter={yFmt} stroke={BASELINE} width={48} />
-            <Tooltip content={<ChartTooltip metricType={metricType} hasCompare={hasCompare} />} />
-            <Area type="monotone" dataKey="a" stroke={SERIES_A} strokeWidth={2.5} fill="url(#fillA)" dot={false} />
+            <Tooltip content={chartTooltip} />
+            <Area
+              type="monotone"
+              dataKey="a"
+              stroke={SERIES_A}
+              strokeWidth={2.5}
+              fill="url(#fillA)"
+              dot={rows.length === 1}
+            />
             {hasCompare && (
               <Area
                 type="monotone"
@@ -326,15 +506,16 @@ export default function ChartView({ data, chartType, metricIndex, height = 320, 
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={rows} margin={{ right: 12 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
+          {bandAreas}
           <XAxis dataKey="name" tick={axisTick} stroke={BASELINE} interval="preserveStartEnd" />
           <YAxis tick={axisTick} tickFormatter={yFmt} stroke={BASELINE} width={48} />
-          <Tooltip content={<ChartTooltip metricType={metricType} hasCompare={hasCompare} />} />
+          <Tooltip content={chartTooltip} />
           <Line
             type="monotone"
             dataKey="a"
             stroke={SERIES_A}
             strokeWidth={2.5}
-            dot={false}
+            dot={rows.length === 1}
             activeDot={{ r: 4.5 }}
           />
           {hasCompare && (

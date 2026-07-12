@@ -1,5 +1,6 @@
 "use client";
 
+import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import type { MetaItem } from "@/lib/types";
 
@@ -44,20 +45,25 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full truncate rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-left text-sm text-white hover:border-white/20"
+        className="focus-ring flex w-full items-center gap-2 rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-left text-sm text-white transition-colors duration-150 hover:border-white/25"
       >
-        {label}
-        <span className="float-right text-[#7f959d]">{open ? "▴" : "▾"}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <CaretDownIcon
+          size={14}
+          weight="bold"
+          className="shrink-0 text-[#7f959d] transition-transform duration-150"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+        />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-white/10 bg-[#0e1c26] shadow-2xl">
+        <div className="animate-pop-in absolute z-20 mt-1.5 max-h-72 w-full origin-top overflow-y-auto rounded-lg border border-white/10 bg-[#0e1c26] shadow-2xl shadow-black/40">
           <div className="sticky top-0 bg-[#0e1c26] p-2">
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={`Search ${placeholder.toLowerCase()}…`}
-              className="w-full rounded-md border border-white/10 bg-[#081219] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#6ae499]"
+              className="focus-ring w-full rounded-md border border-white/10 bg-[#081219] px-2.5 py-1.5 text-sm text-white transition-colors duration-150 focus:border-[#6ae499]"
             />
           </div>
           {allowNone && (
@@ -67,7 +73,7 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
                 if (selected.length) selected.forEach((s) => onToggle(s));
                 setOpen(false);
               }}
-              className="block w-full px-3 py-2 text-left text-sm text-[#7f959d] hover:bg-white/5"
+              className="focus-ring block w-full px-3 py-2 text-left text-sm text-[#7f959d] transition-colors duration-100 hover:bg-white/5 hover:text-[#c2d1d5]"
             >
               None (totals only)
             </button>
@@ -90,13 +96,15 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
                     onToggle(i.apiName);
                   }
                 }}
-                className={`block w-full px-3 py-2 text-left text-sm hover:bg-white/5 disabled:opacity-40 ${
+                className={`focus-ring flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors duration-100 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${
                   isSel ? "text-[#6ae499]" : "text-[#c2d1d5]"
                 }`}
               >
-                <span className="mr-2 inline-block w-4">{isSel ? "✓" : ""}</span>
-                {i.uiName}
-                <span className="ml-2 text-xs text-[#7f959d]">{i.category}</span>
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                  {isSel && <CheckIcon size={13} weight="bold" className="animate-check-pop" />}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{i.uiName}</span>
+                <span className="shrink-0 text-xs text-[#7f959d]">{i.category}</span>
               </button>
             );
           })}

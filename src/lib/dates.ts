@@ -18,6 +18,165 @@ export function maxSelectableDate(today = new Date()): string {
   return fmt(addDays(today, -1));
 }
 
+/** Every calendar date from start to end inclusive, as "YYYY-MM-DD". Used to
+ *  build a canonical day sequence for a range instead of trusting GA4 to
+ *  return a dense row per day (it won't, once a dimension like eventName
+ *  makes rows genuinely sparse). */
+export function enumerateDates(start: string, end: string): string[] {
+  const out: string[] = [];
+  let d = new Date(start + "T00:00:00");
+  const endD = new Date(end + "T00:00:00");
+  while (d.getTime() <= endD.getTime()) {
+    out.push(fmt(d));
+    d = addDays(d, 1);
+  }
+  return out;
+}
+
+// ---------- time granularity (daily / weekly / monthly bucketing) ----------
+
+/** GA4 dimensions for each time granularity. "isoWeek" uses isoYear+isoWeek
+ *  (Monday-start ISO 8601 weeks) rather than GA4's property-defined `week`,
+ *  so bucketing is deterministic regardless of the property's week-start
+ *  admin setting. */
+export type TimeGranularity = "date" | "isoWeek" | "month";
+
+export function granularityDims(g: TimeGranularity): string[] {
+  if (g === "date") return ["date"];
+  if (g === "isoWeek") return ["isoYear", "isoWeek"];
+  return ["yearMonth"];
+}
+
+/** Does `dims` consist of exactly one granularity's dimension set (and
+ *  nothing else)? That's the "pure time series" case where current/previous
+ *  can be day/week/month-index aligned instead of only pairing when the
+ *  literal bucket value happens to match across both ranges. */
+export function detectGranularity(dims: string[]): TimeGranularity | null {
+  if (dims.length === 1 && dims[0] === "date") return "date";
+  if (dims.length === 2 && dims[0] === "isoYear" && dims[1] === "isoWeek") return "isoWeek";
+  if (dims.length === 1 && dims[0] === "yearMonth") return "month";
+  return null;
+}
+
+/** ISO 8601 week: Monday-start, week 1 is the week containing the year's
+ *  first Thursday. Standard algorithm, verified against known ISO week
+ *  tables (e.g. 2026-01-01 is ISO week 2026-W01, a Thursday). Local-time
+ *  arithmetic throughout — deliberately not Date.UTC — to stay consistent
+ *  with every other date helper in this file; mixing UTC-based instants
+ *  with the local-getter reads those helpers use is exactly how a bucket
+ *  boundary silently shifts by a day on a negative-UTC-offset server. */
+export function isoWeekOf(d: Date): { isoYear: number; isoWeek: number } {
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayNum = (date.getDay() + 6) % 7; // Mon=0 .. Sun=6
+  date.setDate(date.getDate() - dayNum + 3); // now Thursday of this ISO week
+  const isoYear = date.getFullYear();
+  const jan4 = new Date(isoYear, 0, 4);
+  const jan4DayNum = (jan4.getDay() + 6) % 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setDate(jan4.getDate() - jan4DayNum);
+  const isoWeek = Math.round((date.getTime() - week1Monday.getTime()) / (7 * 86400000)) + 1;
+  return { isoYear, isoWeek };
+}
+
+/** The Monday that starts a given ISO year/week. */
+export function isoWeekMonday(isoYear: number, isoWeek: number): Date {
+  const jan4 = new Date(isoYear, 0, 4);
+  const jan4DayNum = (jan4.getDay() + 6) % 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setDate(jan4.getDate() - jan4DayNum);
+  return addDays(week1Monday, (isoWeek - 1) * 7);
+}
+
+/** Bucket key GA4 would report for this date, at this granularity — zero-padded
+ *  so the same format the API returns (isoWeek "01".."53", yearMonth "202607"). */
+export function bucketKey(g: TimeGranularity, d: Date): string {
+  if (g === "date") return fmt(d).replaceAll("-", "");
+  if (g === "isoWeek") {
+    const { isoYear, isoWeek } = isoWeekOf(d);
+    return `${isoYear}${String(isoWeek).padStart(2, "0")}`;
+  }
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Every bucket (in GA4's own key format) whose span overlaps [start, end],
+ *  in chronological order — the canonical bucket sequence for a range,
+ *  independent of which buckets GA4 actually returned rows for. */
+export function enumerateBuckets(g: TimeGranularity, start: string, end: string): string[] {
+  if (g === "date") return enumerateDates(start, end).map((d) => d.replaceAll("-", ""));
+  const startD = new Date(start + "T00:00:00");
+  const endD = new Date(end + "T00:00:00");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  if (g === "month") {
+    let d = new Date(startD.getFullYear(), startD.getMonth(), 1);
+    while (d.getTime() <= endD.getTime()) {
+      const k = bucketKey(g, d);
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(k);
+      }
+      d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    }
+    return out;
+  }
+  // isoWeek: walk Monday-to-Monday
+  const { isoYear, isoWeek } = isoWeekOf(startD);
+  let monday = isoWeekMonday(isoYear, isoWeek);
+  while (monday.getTime() <= endD.getTime()) {
+    const k = bucketKey(g, monday);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
+    monday = addDays(monday, 7);
+  }
+  return out;
+}
+
+/** How many days of [rangeStart, rangeEnd] actually fall inside this bucket —
+ *  a partial edge bucket (range starts mid-week/mid-month) has fewer than
+ *  7 or the full month's days, which is what "average per bucket" needs. */
+export function bucketDayCount(g: TimeGranularity, key: string, rangeStart: string, rangeEnd: string): number {
+  const { start, end } = bucketSpan(g, key);
+  const s = start > rangeStart ? start : rangeStart;
+  const e = end < rangeEnd ? end : rangeEnd;
+  if (s > e) return 0;
+  return Math.round((new Date(e + "T00:00:00").getTime() - new Date(s + "T00:00:00").getTime()) / 86400000) + 1;
+}
+
+/** The full calendar span a bucket key covers, for date-range clamping and
+ *  for chart/table labels ("Jul 6 – Jul 12", "July 2026"). */
+export function bucketSpan(g: TimeGranularity, key: string): { start: string; end: string } {
+  if (g === "date") {
+    const iso = `${key.slice(0, 4)}-${key.slice(4, 6)}-${key.slice(6, 8)}`;
+    return { start: iso, end: iso };
+  }
+  if (g === "month") {
+    const y = Number(key.slice(0, 4));
+    const m = Number(key.slice(4, 6));
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0);
+    return { start: fmt(start), end: fmt(end) };
+  }
+  const isoYear = Number(key.slice(0, 4));
+  const isoWeek = Number(key.slice(4, 6));
+  const monday = isoWeekMonday(isoYear, isoWeek);
+  return { start: fmt(monday), end: fmt(addDays(monday, 6)) };
+}
+
+/** Does a bucket's calendar span overlap [rangeStart, rangeEnd] at all? Used
+ *  for shading a chart with a user-defined highlight period, and for summing
+ *  a metric's rows that fall inside one, without caring whether the overlap
+ *  is partial (a period that starts mid-week still highlights that week). */
+export function bucketOverlapsRange(g: TimeGranularity, key: string, rangeStart: string, rangeEnd: string): boolean {
+  const { start, end } = g === "date" ? { start: dashDate(key), end: dashDate(key) } : bucketSpan(g, key);
+  return start <= rangeEnd && end >= rangeStart;
+}
+
+function dashDate(yyyymmdd: string): string {
+  return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
+}
+
 /** Clamp a custom start/end pair: nothing past yesterday, start never after end. */
 function clampCustom(start: string, end: string, ceiling: string): { start: string; end: string } {
   let e = end > ceiling ? ceiling : end;

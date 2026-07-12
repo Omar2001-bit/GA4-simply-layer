@@ -1,6 +1,9 @@
 "use client";
 
-import { deltaPct, fmtDateLabel, fmtDelta, fmtValue, humanize } from "@/lib/format";
+import { CaretDownIcon, CaretUpIcon, TrayIcon } from "@phosphor-icons/react";
+import { metricLabel } from "./ChartView";
+import { detectGranularity } from "@/lib/dates";
+import { deltaPct, fmtBucketLabel, fmtDelta, fmtValue, humanize } from "@/lib/format";
 import { DELTA_DOWN, DELTA_UP } from "@/lib/theme";
 import type { MetaItem, ReportResponse } from "@/lib/types";
 
@@ -10,20 +13,19 @@ interface Props {
   compact?: boolean;
 }
 
-function metricLabel(apiName: string, meta?: MetaItem[]): string {
-  return meta?.find((m) => m.apiName === apiName)?.uiName ?? humanize(apiName);
-}
-
 function Delta({ value }: { value: number | null }) {
   if (value === null) return <span className="text-[#7f959d]">–</span>;
   const color = value < 0 ? DELTA_DOWN : DELTA_UP;
   return (
-    <span style={{ color }} className="font-medium tabular-nums">
-      {value > 0 ? "▲" : value < 0 ? "▼" : ""} {fmtDelta(value)}
+    <span style={{ color }} className="inline-flex items-center gap-0.5 font-medium tabular-nums">
+      {value !== 0 &&
+        (value > 0 ? <CaretUpIcon size={10} weight="fill" /> : <CaretDownIcon size={10} weight="fill" />)}
+      {fmtDelta(value)}
     </span>
   );
 }
 
+/** Full numerical view: one card per metric, current/previous/delta. */
 export function KpiCards({ data, metricsMeta, compact }: Props) {
   return (
     <div className={`grid gap-3 ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"}`}>
@@ -32,20 +34,17 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
         const b = data.totalsB?.[i];
         const type = data.metricHeaders[i]?.type;
         return (
-          <div
-            key={m}
-            className="rounded-xl border border-white/10 bg-[#0e1c26] px-4 py-3"
-          >
+          <div key={m} className="rounded-xl border border-white/10 px-4 py-3 text-left" style={{ background: "#0e1c26" }}>
             <div className="truncate text-xs uppercase tracking-wider text-[#7f959d]">
               {metricLabel(m, metricsMeta)}
             </div>
-            <div className={`mt-1 font-semibold text-white ${compact ? "text-xl" : "text-2xl"}`}>
-              {fmtValue(a, type)}
+            <div className={`mt-1 font-semibold tabular-nums text-white ${compact ? "text-xl" : "text-2xl"}`}>
+              {fmtValue(a, type, data.currencyCode)}
             </div>
             {data.rangeB && (
               <div className="mt-1 flex items-baseline gap-2 text-xs">
                 <Delta value={deltaPct(a, b)} />
-                <span className="text-[#7f959d]">vs {fmtValue(b ?? 0, type)}</span>
+                <span className="text-[#7f959d]">vs {fmtValue(b ?? 0, type, data.currencyCode)}</span>
               </div>
             )}
           </div>
@@ -58,10 +57,11 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
 export default function NumbersView({ data, metricsMeta }: Props) {
   const hasCompare = !!data.rangeB;
   const dimList = data.dimensions ?? (data.dimension ? [data.dimension] : []);
-  const isPureDate = dimList.join() === "date";
+  const granularity = detectGranularity(dimList);
   const hasDim = dimList.length > 0 && data.rows.length > 0 && data.rows[0].dim !== "total";
+  const colCount = 1 + data.metrics.length * (hasCompare ? 3 : 1);
   return (
-    <div className="space-y-4">
+    <div className="animate-fade-in space-y-4">
       <KpiCards data={data} metricsMeta={metricsMeta} />
       {hasDim && (
         <div className="overflow-x-auto rounded-xl border border-white/10 bg-[#0e1c26]">
@@ -85,28 +85,44 @@ export default function NumbersView({ data, metricsMeta }: Props) {
               )}
             </thead>
             <tbody>
-              {data.rows.map((r, ri) => (
-                <tr key={`${r.dim}-${ri}`} className="border-b border-white/5 last:border-0 hover:bg-white/[0.03]">
-                  <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c2d1d5]">
-                    {isPureDate ? fmtDateLabel(r.dim) : r.dim || "(not set)"}
-                    {r.bDim && (
-                      <span className="ml-2 text-xs text-[#7f959d]">vs {fmtDateLabel(r.bDim)}</span>
-                    )}
+              {data.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={colCount} className="px-4 py-8 text-center text-xs text-[#7f959d]">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <TrayIcon size={18} />
+                      No rows for this breakdown.
+                    </div>
                   </td>
-                  {data.metrics.map((m, mi) => {
-                    const type = data.metricHeaders[mi]?.type;
-                    const a = r.a[mi] ?? 0;
-                    const b = r.b?.[mi];
-                    return hasCompare ? (
-                      <FragmentCells key={m} a={a} b={b} type={type} />
-                    ) : (
-                      <td key={m} className="px-4 py-2.5 text-right tabular-nums text-white">
-                        {fmtValue(a, type)}
-                      </td>
-                    );
-                  })}
                 </tr>
-              ))}
+              ) : (
+                data.rows.map((r, ri) => (
+                  <tr
+                    key={`${r.dim}-${ri}`}
+                    className="border-b border-white/5 transition-colors duration-100 last:border-0 hover:bg-white/[0.03]"
+                  >
+                    <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c2d1d5]">
+                      {granularity ? fmtBucketLabel(granularity, r.dim) : r.dim || "(not set)"}
+                      {r.bDim && (
+                        <span className="ml-2 text-xs text-[#7f959d]">
+                          vs {granularity ? fmtBucketLabel(granularity, r.bDim) : r.bDim}
+                        </span>
+                      )}
+                    </td>
+                    {data.metrics.map((m, mi) => {
+                      const type = data.metricHeaders[mi]?.type;
+                      const a = r.a[mi] ?? 0;
+                      const b = r.b?.[mi];
+                      return hasCompare ? (
+                        <FragmentCells key={m} a={a} b={b} type={type} currencyCode={data.currencyCode} />
+                      ) : (
+                        <td key={m} className="px-4 py-2.5 text-right tabular-nums text-white">
+                          {fmtValue(a, type, data.currencyCode)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -125,12 +141,12 @@ function FragmentHeads() {
   );
 }
 
-function FragmentCells({ a, b, type }: { a: number; b?: number; type?: string }) {
+function FragmentCells({ a, b, type, currencyCode }: { a: number; b?: number; type?: string; currencyCode?: string }) {
   return (
     <>
-      <td className="px-2 py-2.5 text-right tabular-nums text-white">{fmtValue(a, type)}</td>
+      <td className="px-2 py-2.5 text-right tabular-nums text-white">{fmtValue(a, type, currencyCode)}</td>
       <td className="px-2 py-2.5 text-right tabular-nums text-[#7f959d]">
-        {b === undefined ? "–" : fmtValue(b, type)}
+        {b === undefined ? "–" : fmtValue(b, type, currencyCode)}
       </td>
       <td className="px-2 py-2.5 text-right">
         <Delta value={deltaPct(a, b)} />

@@ -31,3 +31,19 @@ export const CATEGORICAL = [
 
 export const DELTA_UP = "#0ca30c";
 export const DELTA_DOWN = "#d03b3b";
+
+// One color per metric slot (index-stable, up to MAX_METRICS=10). Deliberately
+// louder/more separated than CATEGORICAL — multi-metric overlays need every
+// line to read as its own thing at a glance, not to sit quietly in a family.
+export const METRIC_COLORS = [
+  "#6ae499", // brand green
+  "#3987e5", // blue
+  "#e6a23c", // amber
+  "#e66767", // red
+  "#9085e9", // violet
+  "#19c2c2", // cyan
+  "#d55181", // magenta
+  "#d95926", // orange
+  "#c9d94a", // lime
+  "#5ea8ff", // sky
+];

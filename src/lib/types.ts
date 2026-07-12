@@ -64,10 +64,86 @@ export interface FilterClause {
 export const MAX_METRICS = 10;
 export const MAX_DIMENSIONS = 9;
 
+// GA4 has no per-event "count" metric — event counts are eventCount (metric)
+// filtered by eventName (dimension). A "virtual" metric like "event:purchase"
+// carries that intent through config.metrics/ReportRequest/ReportResponse
+// unchanged in shape; the server (ga4.ts) is the only place that resolves it
+// into the actual eventName-filtered eventCount query.
+export const EVENT_METRIC_PREFIX = "event:";
+
+export function isEventMetric(apiName: string): boolean {
+  return apiName.startsWith(EVENT_METRIC_PREFIX);
+}
+
+export function eventMetricName(apiName: string): string {
+  return apiName.slice(EVENT_METRIC_PREFIX.length);
+}
+
+export function makeEventMetric(eventName: string): string {
+  return `${EVENT_METRIC_PREFIX}${eventName}`;
+}
+
+// Conversion rate for any event: eventCount for that event ÷ totalUsers (or ÷
+// sessions), computed row-by-row and — separately, NOT by averaging rows —
+// as totals-over-totals. Same virtual-metric trick as event:*: the server is
+// the only place that resolves "convu:purchase" into real GA4 queries.
+export const CONV_USER_PREFIX = "convu:";
+export const CONV_SESSION_PREFIX = "convs:";
+export type ConvDenom = "totalUsers" | "sessions";
+
+export function isConvRateMetric(apiName: string): boolean {
+  return apiName.startsWith(CONV_USER_PREFIX) || apiName.startsWith(CONV_SESSION_PREFIX);
+}
+
+export function convRateDenom(apiName: string): ConvDenom {
+  return apiName.startsWith(CONV_USER_PREFIX) ? "totalUsers" : "sessions";
+}
+
+export function convRateEventName(apiName: string): string {
+  return apiName.slice(apiName.indexOf(":") + 1);
+}
+
+export function makeConvRateMetric(eventName: string, denom: ConvDenom): string {
+  return `${denom === "totalUsers" ? CONV_USER_PREFIX : CONV_SESSION_PREFIX}${eventName}`;
+}
+
+/** Metric type for conversion-rate columns — always renders as a percent,
+ *  even above 100% (repeat purchases per user are a real thing), unlike
+ *  TYPE_FLOAT's "only if between 0 and 1" heuristic for native GA4 rates. */
+export const TYPE_RATE_PERCENT = "TYPE_RATE_PERCENT";
+
+/** Named date-range highlight ("Campaign Launch", "Holiday Season") a user
+ *  can define on a report — shaded on the chart, broken out as its own
+ *  stat block in Analytics. First-matching period wins if ranges overlap. */
+export interface ColorPeriod {
+  id: string;
+  label: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;
+  color: string; // hex
+}
+
+// Brand-consistent preset palette for color periods — reuses the app's own
+// categorical set rather than an arbitrary picker, so period highlights
+// never clash with the rest of the UI.
+export const COLOR_PERIOD_PALETTE = [
+  "#3987e5",
+  "#e6a23c",
+  "#e66767",
+  "#9085e9",
+  "#19c2c2",
+  "#d55181",
+  "#d95926",
+  "#c9d94a",
+  "#5ea8ff",
+  "#199e70",
+];
+
 export interface ReportConfig {
   id: string;
   name: string;
   description?: string;
+  group?: string; // user-named group, shown as a section on the mega dashboard
   property: string; // e.g. "properties/413595793"
   dimension: string; // legacy single dimension — kept for old saved presets
   dimensions?: string[]; // GA4 dimension apiNames (0-9); [] = totals only
@@ -76,6 +152,7 @@ export interface ReportConfig {
   rangeA: DateRangeSel; // current / "after"
   rangeB: CompareSel; // comparison / "before"
   filters?: FilterClause[]; // ANDed dimension filters
+  colorPeriods?: ColorPeriod[]; // named date-range highlights, see §8.2
   limit: number;
   createdAt: string;
   updatedAt: string;
@@ -128,6 +205,7 @@ export interface ReportResponse {
   rangeA: ResolvedRange;
   rangeB?: ResolvedRange | null;
   rowCount: number;
+  currencyCode?: string; // property's real currency (e.g. "EGP"), for TYPE_CURRENCY formatting
 }
 
 export interface PropertySummary {

@@ -3,6 +3,12 @@
 :root {
   --background: #020601;
   --foreground: #ffffff;
+
+  /* motion tokens — one rhythm for the whole app */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 320ms;
 }
 
 @theme inline {
@@ -15,10 +21,95 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sora), system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
 }
 
 /* recessive scrollbars for the dark surface */
 * {
   scrollbar-width: thin;
   scrollbar-color: #24363f transparent;
+}
+
+::selection {
+  background: rgba(106, 228, 153, 0.25);
+  color: #ffffff;
+}
+
+/* one focus ring, everywhere — never outline:none without this replacing it */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: 2px solid #6ae499;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.96) translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  @keyframes check-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.7);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.12);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-fade-in {
+    animation: fade-in var(--duration-slow) var(--ease-out) both;
+  }
+  .animate-rise-in {
+    animation: rise-in var(--duration-slow) var(--ease-out) both;
+  }
+  .animate-pop-in {
+    animation: pop-in var(--duration-base) var(--ease-out) both;
+  }
+  .animate-check-pop {
+    animation: check-pop var(--duration-slow) var(--ease-out) both;
+  }
+}
+
+/* reduced motion: every animation above collapses to instant-visible, no exceptions */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-rise-in,
+  .animate-pop-in,
+  .animate-check-pop {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }
