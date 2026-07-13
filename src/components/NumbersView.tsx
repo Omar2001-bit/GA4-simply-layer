@@ -35,7 +35,7 @@ export function KpiCards({ data, metricsMeta, compact }: Props) {
         const type = data.metricHeaders[i]?.type;
         return (
           <div key={m} className="rounded-xl border border-white/10 px-4 py-3 text-left" style={{ background: "#0e1c26" }}>
-            <div className="truncate text-xs uppercase tracking-wider text-[#7f959d]">
+            <div className="text-[11px] uppercase leading-tight tracking-wider text-[#7f959d]">
               {metricLabel(m, metricsMeta)}
             </div>
             <div className={`mt-1 font-semibold tabular-nums text-white ${compact ? "text-xl" : "text-2xl"}`}>
