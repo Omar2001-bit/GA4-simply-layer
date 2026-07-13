@@ -551,7 +551,7 @@ export default function ReportCanvas({
             ) : (
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                 {config.funnels!.map((fn) => (
-                  <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} />
+                  <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} rangeB={config.rangeB} />
                 ))}
               </div>
             )}
