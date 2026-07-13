@@ -14,7 +14,6 @@ import {
   Pie,
   PieChart,
   ReferenceArea,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -99,13 +98,17 @@ function buildData(data: ReportResponse, metricIndex: number, granularity: TimeG
 /** One continuous chronological axis: previous-period buckets first (their
  *  real dates, values in `b`), then current-period buckets (values in `a`).
  *  Where the two ranges overlap (growing-baseline compares), the current
- *  bucket wins so a date never appears twice. Returns null when the data
+ *  bucket wins so a date never appears twice. The first current bucket also
+ *  carries a `b` value equal to its `a`, bridging the two series so the
+ *  dashed previous phase connects seamlessly into the solid current phase
+ *  instead of leaving a gap at the boundary. Returns null when the data
  *  can't support a timeline (no compare, or no aligned previous dates). */
 function buildTimelineData(
   data: ReportResponse,
   metricIndex: number,
-  granularity: TimeGranularity | null
-): { rows: Datum[]; currentStart: string } | null {
+  granularity: TimeGranularity | null,
+  bridge: boolean // line/area only — a bar chart would render the bridge as a duplicate bar
+): { rows: Datum[] } | null {
   if (!granularity || !data.rangeB) return null;
   const g = granularity;
   const curr = new Map<string, Datum>();
@@ -117,7 +120,8 @@ function buildTimelineData(
   if (prev.size === 0 || curr.size === 0) return null;
   const prevRows = [...prev.values()].filter((p) => !curr.has(p.key)).sort((x, y) => (x.key < y.key ? -1 : 1));
   const currRows = [...curr.values()].sort((x, y) => (x.key < y.key ? -1 : 1));
-  return { rows: [...prevRows, ...currRows], currentStart: currRows[0].name };
+  if (bridge && prevRows.length > 0) currRows[0] = { ...currRows[0], b: currRows[0].a };
+  return { rows: [...prevRows, ...currRows] };
 }
 
 /** Which contiguous x-axis span (by row label) each color period covers, so
@@ -361,7 +365,7 @@ export default function ChartView({
   // anything else silently falls back to the overlay rendering
   const timeline =
     viewMode === "timeline" && (chartType === "line" || chartType === "area" || chartType === "bar")
-      ? buildTimelineData(data, metricIndex, granularity)
+      ? buildTimelineData(data, metricIndex, granularity, chartType !== "bar")
       : null;
   const chartTooltip = (
     <ChartTooltip
@@ -423,19 +427,10 @@ export default function ChartView({
         label={{ value: period.label, position: "insideTopLeft", fill: period.color, fontSize: 10 }}
       />
     ));
-    const divider = (
-      <ReferenceLine
-        x={timeline.currentStart}
-        stroke={INK_MUTED}
-        strokeDasharray="4 4"
-        label={{ value: "current →", position: "insideTopRight", fill: INK_MUTED, fontSize: 10 }}
-      />
-    );
     const shared = (
       <>
         <CartesianGrid stroke={GRID} vertical={false} />
         {tBands}
-        {divider}
         <XAxis dataKey="name" tick={axisTick} stroke={BASELINE} interval="preserveStartEnd" />
         <YAxis tick={axisTick} tickFormatter={yFmt} stroke={BASELINE} width={48} />
         <Tooltip content={chartTooltip} cursor={chartType === "bar" ? { fill: "rgba(255,255,255,0.04)" } : undefined} />
