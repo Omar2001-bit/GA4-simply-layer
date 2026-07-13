@@ -460,39 +460,62 @@ export default function ReportEditor({
                 <option value="open">Open — users can enter at any step</option>
               </select>
               <div className="space-y-1">
-                {fn.steps.map((s, si) => (
-                  <div key={s.id} className="flex items-center gap-1.5">
-                    <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-[#7f959d]">{si + 1}.</span>
-                    <select
-                      className={`min-w-0 flex-1 ${smallFieldCls}`}
-                      value={s.eventName}
-                      onChange={(e) =>
-                        setFunnel(i, {
-                          steps: fn.steps.map((x, xi) =>
-                            xi === si
-                              ? { ...x, eventName: e.target.value, label: x.label || humanizeEvent(e.target.value) }
-                              : x
-                          ),
-                        })
-                      }
-                    >
-                      <option value="">Pick an event…</option>
-                      {(eventNames ?? []).map((n) => (
-                        <option key={n} value={n}>
-                          {humanizeEvent(n)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setFunnel(i, { steps: fn.steps.filter((_, xi) => xi !== si) })}
-                      aria-label="Remove step"
-                      className="focus-ring shrink-0 rounded-md px-1 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
-                    >
-                      <TrashIcon size={12} />
-                    </button>
+                {fn.steps.map((s, si) => {
+                  const setStep = (patch: Partial<(typeof fn.steps)[number]>) =>
+                    setFunnel(i, { steps: fn.steps.map((x, xi) => (xi === si ? { ...x, ...patch } : x)) });
+                  return (
+                  <div key={s.id} className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-[#7f959d]">{si + 1}.</span>
+                      <select
+                        className={`min-w-0 flex-1 ${smallFieldCls}`}
+                        value={s.eventName}
+                        onChange={(e) =>
+                          setStep({ eventName: e.target.value, label: s.label || humanizeEvent(e.target.value) })
+                        }
+                      >
+                        <option value="">Pick an event…</option>
+                        {(eventNames ?? []).map((n) => (
+                          <option key={n} value={n}>
+                            {humanizeEvent(n)}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setFunnel(i, { steps: fn.steps.filter((_, xi) => xi !== si) })}
+                        aria-label="Remove step"
+                        className="focus-ring shrink-0 rounded-md px-1 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
+                      >
+                        <TrashIcon size={12} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5 pl-[1.375rem]">
+                      <select
+                        className={`w-32 shrink-0 ${smallFieldCls}`}
+                        value={s.pageMatch ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value as "" | NonNullable<typeof s.pageMatch>;
+                          setStep(v === "" ? { pageMatch: undefined, pagePath: undefined } : { pageMatch: v });
+                        }}
+                      >
+                        <option value="">Any page</option>
+                        <option value="exact">Page is exactly</option>
+                        <option value="contains">Page contains</option>
+                        <option value="begins">Page begins with</option>
+                      </select>
+                      {s.pageMatch && (
+                        <input
+                          className={`min-w-0 flex-1 ${smallFieldCls}`}
+                          placeholder={s.pageMatch === "exact" ? "/ (homepage)" : "/products/"}
+                          value={s.pagePath ?? ""}
+                          onChange={(e) => setStep({ pagePath: e.target.value })}
+                        />
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
                 {fn.steps.length < 10 && (
                   <button
                     type="button"

@@ -167,10 +167,16 @@ export const COLOR_PERIOD_PALETTE = [
 
 // ---- funnels (GA4 native funnel reports) ----
 
+export type FunnelPageMatch = "exact" | "contains" | "begins";
+
 export interface FunnelStep {
   id: string;
   label: string; // display name for the step ("Added to cart")
   eventName: string; // GA4 event that defines the step ("add_to_cart")
+  // optional page condition ANDed with the event — "the event happened on
+  // this page": exact "/" for the homepage, contains "/products/", etc.
+  pageMatch?: FunnelPageMatch;
+  pagePath?: string;
 }
 
 /** One funnel definition — executed by GA4's own funnel engine

@@ -757,13 +757,36 @@ export async function runFunnelReport(
   const steps = funnel.steps.filter((s) => s.eventName).slice(0, 10);
   if (steps.length < 2) return { steps: [] };
 
+  const PAGE_MATCH: Record<string, string> = { exact: "EXACT", contains: "CONTAINS", begins: "BEGINS_WITH" };
+  // a step is its event, optionally ANDed with "…and it happened on this
+  // page". Funnel steps use their own field schema: unifiedPagePathScreen is
+  // the page path without query string (plain pagePath is rejected here), so
+  // exact "/" matches the homepage even when UTM parameters are present.
+  const stepExpression = (s: (typeof steps)[number]) => {
+    const eventExpr = { funnelEventFilter: { eventName: s.eventName } };
+    if (!s.pagePath || !s.pageMatch || !PAGE_MATCH[s.pageMatch]) return eventExpr;
+    return {
+      andGroup: {
+        expressions: [
+          eventExpr,
+          {
+            funnelFieldFilter: {
+              fieldName: "unifiedPagePathScreen",
+              stringFilter: { matchType: PAGE_MATCH[s.pageMatch], value: s.pagePath, caseSensitive: false },
+            },
+          },
+        ],
+      },
+    };
+  };
+
   const body = {
     dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
     funnel: {
       isOpenFunnel: funnel.open,
       steps: steps.map((s) => ({
         name: s.label || s.eventName,
-        filterExpression: { funnelEventFilter: { eventName: s.eventName } },
+        filterExpression: stepExpression(s),
       })),
     },
   };
