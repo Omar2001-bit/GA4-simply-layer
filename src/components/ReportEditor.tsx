@@ -18,10 +18,13 @@ import {
   makeEventMetric,
   type ColorPeriod,
   type FilterClause,
+  type FunnelConfig,
   type MetadataResponse,
   type PropertySummary,
   type ReportConfig,
 } from "@/lib/types";
+
+const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 interface Props {
   config: ReportConfig;
@@ -124,6 +127,10 @@ export default function ReportEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterFields, config.property]);
+
+  const funnels = config.funnels ?? [];
+  const setFunnel = (i: number, patch: Partial<FunnelConfig>) =>
+    set({ funnels: funnels.map((f, idx) => (idx === i ? { ...f, ...patch } : f)) });
 
   // real event names actually firing in this property — GA4 has no
   // per-event "count" metric, so these are offered as virtual metrics
@@ -420,6 +427,106 @@ export default function ReportEditor({
         <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
           Shaded on every graph, and broken out as its own stat block in Analytics. Overlapping
           periods: the first one defined wins.
+        </p>
+      </div>
+
+      <div>
+        <label className={labelCls}>Funnels</label>
+        <div className="space-y-2">
+          {funnels.map((fn, i) => (
+            <div key={fn.id} className="animate-rise-in space-y-1.5 rounded-xl border border-white/10 bg-[#081219] p-2.5">
+              <div className="flex items-center gap-1.5">
+                <input
+                  className={`min-w-0 flex-1 ${smallFieldCls}`}
+                  placeholder="Funnel name (e.g. Checkout)…"
+                  value={fn.name}
+                  onChange={(e) => setFunnel(i, { name: e.target.value })}
+                />
+                <button
+                  type="button"
+                  onClick={() => set({ funnels: funnels.filter((_, idx) => idx !== i) })}
+                  aria-label="Remove funnel"
+                  className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
+                >
+                  <TrashIcon size={13} />
+                </button>
+              </div>
+              <select
+                className={`w-full ${smallFieldCls}`}
+                value={fn.open ? "open" : "closed"}
+                onChange={(e) => setFunnel(i, { open: e.target.value === "open" })}
+              >
+                <option value="closed">Closed — users must enter at step 1</option>
+                <option value="open">Open — users can enter at any step</option>
+              </select>
+              <div className="space-y-1">
+                {fn.steps.map((s, si) => (
+                  <div key={s.id} className="flex items-center gap-1.5">
+                    <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-[#7f959d]">{si + 1}.</span>
+                    <select
+                      className={`min-w-0 flex-1 ${smallFieldCls}`}
+                      value={s.eventName}
+                      onChange={(e) =>
+                        setFunnel(i, {
+                          steps: fn.steps.map((x, xi) =>
+                            xi === si
+                              ? { ...x, eventName: e.target.value, label: x.label || humanizeEvent(e.target.value) }
+                              : x
+                          ),
+                        })
+                      }
+                    >
+                      <option value="">Pick an event…</option>
+                      {(eventNames ?? []).map((n) => (
+                        <option key={n} value={n}>
+                          {humanizeEvent(n)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setFunnel(i, { steps: fn.steps.filter((_, xi) => xi !== si) })}
+                      aria-label="Remove step"
+                      className="focus-ring shrink-0 rounded-md px-1 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
+                    >
+                      <TrashIcon size={12} />
+                    </button>
+                  </div>
+                ))}
+                {fn.steps.length < 10 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFunnel(i, { steps: [...fn.steps, { id: newId("fs"), label: "", eventName: "" }] })
+                    }
+                    className="focus-ring flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-2 py-1.5 text-[11px] text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
+                  >
+                    <PlusIcon size={11} weight="bold" />
+                    Add step
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              set({
+                funnels: [
+                  ...funnels,
+                  { id: newId("fn"), name: "", open: false, steps: [{ id: newId("fs"), label: "", eventName: "" }] },
+                ],
+              })
+            }
+            className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
+          >
+            <PlusIcon size={13} weight="bold" />
+            Add funnel
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
+          Computed by GA4&rsquo;s own funnel engine (same math as Explorations), each step is an event,
+          in order. At least two steps needed.
         </p>
       </div>
 

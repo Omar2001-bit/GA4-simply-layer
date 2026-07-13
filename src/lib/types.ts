@@ -113,6 +113,26 @@ export function makeConvRateMetric(eventName: string, denom: ConvDenom): string 
   return `${denom === "totalUsers" ? CONV_USER_PREFIX : CONV_SESSION_PREFIX}${eventName}`;
 }
 
+// Events where MORE is BAD — an increase should read red, a decrease green.
+// Explicit names for this stack's known events, plus generic bad-signal
+// patterns so future events (refund_requested, checkout_error…) invert
+// automatically. Deliberately neutral: cart_drawer_close (closing a drawer
+// is normal browsing) and cart_empty_cta_click (a recovery click).
+const NEGATIVE_EVENT_PATTERN = /(remove|refund|return_request|error|fail|cancel|declin|exception|not_found|abandon)/;
+
+export function isNegativeEventName(eventName: string): boolean {
+  return NEGATIVE_EVENT_PATTERN.test(eventName);
+}
+
+/** True when a metric's delta colors should invert (up = red, down = green)
+ *  because the underlying event is a bad signal. Applies to the event count
+ *  and to its conversion-rate variants. */
+export function metricIsInverted(apiName: string): boolean {
+  if (isEventMetric(apiName)) return isNegativeEventName(eventMetricName(apiName));
+  if (isConvRateMetric(apiName)) return isNegativeEventName(convRateEventName(apiName));
+  return false;
+}
+
 /** Metric type for conversion-rate columns — always renders as a percent,
  *  even above 100% (repeat purchases per user are a real thing), unlike
  *  TYPE_FLOAT's "only if between 0 and 1" heuristic for native GA4 rates. */
@@ -145,6 +165,36 @@ export const COLOR_PERIOD_PALETTE = [
   "#199e70",
 ];
 
+// ---- funnels (GA4 native funnel reports) ----
+
+export interface FunnelStep {
+  id: string;
+  label: string; // display name for the step ("Added to cart")
+  eventName: string; // GA4 event that defines the step ("add_to_cart")
+}
+
+/** One funnel definition — executed by GA4's own funnel engine
+ *  (runFunnelReport), not recomputed client-side from event counts.
+ *  `open` maps to GA4's isOpenFunnel: open funnels let users enter at any
+ *  step; closed funnels only count users who entered at step 1. */
+export interface FunnelConfig {
+  id: string;
+  name: string;
+  open: boolean;
+  steps: FunnelStep[]; // 2-10 steps, GA4's own limit
+}
+
+export interface FunnelStepResult {
+  label: string;
+  users: number;
+  rateFromFirst: number | null; // share of step-1 users who reached this step
+  rateFromPrevious: number | null; // share of previous-step users who continued
+}
+
+export interface FunnelResponse {
+  steps: FunnelStepResult[];
+}
+
 export interface ReportConfig {
   id: string;
   name: string;
@@ -159,6 +209,7 @@ export interface ReportConfig {
   rangeB: CompareSel; // comparison / "before"
   filters?: FilterClause[]; // ANDed dimension filters
   colorPeriods?: ColorPeriod[]; // named date-range highlights, see §8.2
+  funnels?: FunnelConfig[]; // GA4-native funnel definitions, rendered in the Funnels section
   limit: number;
   layout?: ReportLayout; // custom section/card arrangement; undefined = default order
   createdAt: string;
@@ -182,13 +233,14 @@ export interface PresetsFile {
 // matrix table — neither has an atomic per-row unit to drag, so both stay
 // whole-section-only draggable. "numbers", "compare", and "insights" are all
 // entry containers: any card can move freely between any of the three.
-export const SECTION_IDS = ["graph", "numbers", "insights", "highlights", "compare"] as const;
+export const SECTION_IDS = ["graph", "numbers", "insights", "funnels", "highlights", "compare"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_TITLES: Record<SectionId, string> = {
   graph: "Graph view",
   numbers: "Numbers view",
   insights: "Insights",
+  funnels: "Funnels",
   highlights: "Highlight periods",
   compare: "Compare metrics",
 };

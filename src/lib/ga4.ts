@@ -10,6 +10,8 @@ import {
   TYPE_RATE_PERCENT,
 } from "./types";
 import type {
+  FunnelConfig,
+  FunnelResponse,
   MetadataResponse,
   PropertySummary,
   ReportRequest,
@@ -729,4 +731,66 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   ]);
 
   return mergeReports(req, rawMetrics, realMetrics, eventNames, convRateMetrics, base, pivot, denom, dims);
+}
+
+// ---------- Data: GA4-native funnel reports (v1alpha runFunnelReport) ----------
+
+const DATA_API_ALPHA = "https://analyticsdata.googleapis.com/v1alpha";
+
+interface RawFunnelReport {
+  funnelTable?: {
+    dimensionHeaders?: { name: string }[];
+    metricHeaders?: { name: string; type: string }[];
+    rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[];
+  };
+}
+
+/** Runs a funnel through GA4's own funnel engine — step sequencing, user
+ *  deduplication, and open/closed semantics all happen server-side at
+ *  Google, exactly matching what Explorations' funnel report shows. We only
+ *  read back active users per step and derive the two completion rates. */
+export async function runFunnelReport(
+  property: string,
+  funnel: FunnelConfig,
+  range: ResolvedRange
+): Promise<FunnelResponse> {
+  const steps = funnel.steps.filter((s) => s.eventName).slice(0, 10);
+  if (steps.length < 2) return { steps: [] };
+
+  const body = {
+    dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+    funnel: {
+      isOpenFunnel: funnel.open,
+      steps: steps.map((s) => ({
+        name: s.label || s.eventName,
+        filterExpression: { funnelEventFilter: { eventName: s.eventName } },
+      })),
+    },
+  };
+
+  const data = await gaRequest<RawFunnelReport>(
+    `${DATA_API_ALPHA}/${property}:runFunnelReport`,
+    "POST",
+    body
+  );
+
+  // funnelTable rows: one per step (dimension "1. <name>"), metric activeUsers.
+  // Rows can arrive with extra grouping rows when dimensions are requested —
+  // we request none, so parse defensively by leading step number.
+  const users = new Array<number>(steps.length).fill(0);
+  for (const row of data.funnelTable?.rows ?? []) {
+    const dim = row.dimensionValues?.[0]?.value ?? "";
+    const idx = Number(dim.split(".")[0]) - 1;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= steps.length) continue;
+    users[idx] = Math.max(users[idx], Number(row.metricValues?.[0]?.value ?? 0));
+  }
+
+  return {
+    steps: steps.map((s, i) => ({
+      label: s.label || s.eventName,
+      users: users[i],
+      rateFromFirst: i === 0 ? null : users[0] > 0 ? users[i] / users[0] : null,
+      rateFromPrevious: i === 0 ? null : users[i - 1] > 0 ? users[i] / users[i - 1] : null,
+    })),
+  };
 }
