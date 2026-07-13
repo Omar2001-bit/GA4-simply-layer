@@ -85,14 +85,21 @@ export function metricLabel(apiName: string, meta?: MetaItem[]): string {
 
 function buildData(data: ReportResponse, metricIndex: number, granularity: TimeGranularity | null): Datum[] {
   const g = granularity ?? "date";
-  return data.rows.map((r) => ({
-    name: fmtBucketLabel(g, r.dim),
-    bName: r.bDim ? fmtBucketLabel(g, r.bDim) : undefined,
-    key: r.dim,
-    bKey: r.bDim,
-    a: r.a[metricIndex] ?? 0,
-    b: r.b ? r.b[metricIndex] ?? 0 : undefined,
-  }));
+  return (
+    data.rows
+      // when the comparison range is longer than the current one, its
+      // unmatched trailing days arrive as rows with an empty current bucket —
+      // alignment artifacts, not plottable days (categorical "" is legit "(not set)")
+      .filter((r) => !granularity || r.dim)
+      .map((r) => ({
+        name: fmtBucketLabel(g, r.dim),
+        bName: r.bDim ? fmtBucketLabel(g, r.bDim) : undefined,
+        key: r.dim,
+        bKey: r.bDim,
+        a: r.a[metricIndex] ?? 0,
+        b: r.b ? r.b[metricIndex] ?? 0 : undefined,
+      }))
+  );
 }
 
 /** One continuous chronological axis: previous-period buckets first (their
@@ -114,7 +121,10 @@ function buildTimelineData(
   const curr = new Map<string, Datum>();
   const prev = new Map<string, Datum>();
   for (const r of data.rows) {
-    curr.set(r.dim, { name: fmtBucketLabel(g, r.dim), key: r.dim, a: r.a[metricIndex] ?? 0 });
+    // rows with an empty current bucket are alignment artifacts (comparison
+    // range longer than the current one) — their bDim/b still belongs on the
+    // previous phase, but they contribute no current-phase point
+    if (r.dim) curr.set(r.dim, { name: fmtBucketLabel(g, r.dim), key: r.dim, a: r.a[metricIndex] ?? 0 });
     if (r.bDim && r.b) prev.set(r.bDim, { name: fmtBucketLabel(g, r.bDim), key: r.bDim, b: r.b[metricIndex] ?? 0 });
   }
   if (prev.size === 0 || curr.size === 0) return null;
