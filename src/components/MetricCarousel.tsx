@@ -1,9 +1,10 @@
 "use client";
 
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import ChartView, { metricLabel } from "./ChartView";
 import MetaPicker from "./MetaPicker";
+import MetricJumpMenu from "./MetricJumpMenu";
 import { detectGranularity, granularityDims, type TimeGranularity } from "@/lib/dates";
 import { deltaPct, fmtDelta, fmtValue } from "@/lib/format";
 import { DELTA_DOWN, DELTA_UP, INK_MUTED } from "@/lib/theme";
@@ -31,6 +32,10 @@ interface Props {
   colorPeriods?: ColorPeriod[];
   metadata: MetadataResponse | null;
   metricsMeta?: MetaItem[];
+  // controlled mode: the parent owns the active slide index (so e.g.
+  // clicking a KPI card elsewhere on the page can jump the graph here)
+  activeIndex?: number;
+  onActiveIndexChange?: (i: number) => void;
 }
 
 const TIME_VIEWS: { value: TimeGranularity; label: string }[] = [
@@ -100,7 +105,7 @@ function MetricSlide({
   const activeGranularity = detectGranularity(dims);
 
   return (
-    <div className="w-full shrink-0 snap-center px-1">
+    <div className="animate-fade-in w-full">
       <div className="rounded-xl border border-white/10 bg-[#081219] p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -186,12 +191,14 @@ function MetricSlide({
   );
 }
 
-/** Each selected metric gets its own graph, current vs previous as two lines,
- *  swiped through horizontally — instead of every metric fighting for space
- *  (and axis scale) on one shared chart. Each slide's breakdown dimension
- *  (including its Day/Week/Month time view) is independent: picking "by
- *  channel" or "Weekly" on the Sessions slide doesn't touch the Purchase
- *  revenue slide sitting next to it. */
+/** Each selected metric gets its own graph, one at a time — instead of every
+ *  metric fighting for space (and axis scale) on one shared chart, or (the
+ *  old approach) every metric's chart mounted and fetching at once, which
+ *  meant a 42-metric report fired 42 concurrent GA4 requests before you'd
+ *  looked at a single one. Only the active metric's slide is mounted; moving
+ *  to another metric (via Prev/Next or the jump menu) fetches on demand.
+ *  Each slide's breakdown dimension (including its Day/Week/Month time view)
+ *  is independent and persists per metric while you browse around. */
 export default function MetricCarousel({
   metrics,
   property,
@@ -204,62 +211,41 @@ export default function MetricCarousel({
   colorPeriods,
   metadata,
   metricsMeta,
+  activeIndex,
+  onActiveIndexChange,
 }: Props) {
   const [slideDims, setSlideDims] = useState<Record<string, string[]>>({});
-  const [active, setActive] = useState(0);
-  const trackRef = useRef<HTMLDivElement>(null);
-
-  // if metrics shrink (one got removed in the editor) keep the index in range
-  useEffect(() => {
-    if (active >= metrics.length) setActive(Math.max(0, metrics.length - 1));
-  }, [metrics.length, active]);
-
-  const scrollTo = (i: number) => {
-    const track = trackRef.current;
-    if (!track) return;
-    const clamped = Math.max(0, Math.min(metrics.length - 1, i));
-    track.scrollTo({ left: clamped * track.clientWidth, behavior: "smooth" });
-    setActive(clamped);
-  };
-
-  const onScroll = () => {
-    const track = trackRef.current;
-    if (!track || track.clientWidth === 0) return;
-    const i = Math.round(track.scrollLeft / track.clientWidth);
-    if (i !== active) setActive(i);
-  };
+  const [internalActive, setInternalActive] = useState(0);
 
   if (metrics.length === 0) return null;
+
+  // clamp at render time (not via effect+setState) so a shrinking metrics
+  // list — one got removed in the editor — never points past the end
+  const active = Math.min(activeIndex ?? internalActive, metrics.length - 1);
+  const goTo = (i: number) => {
+    const clamped = Math.max(0, Math.min(metrics.length - 1, i));
+    if (onActiveIndexChange) onActiveIndexChange(clamped);
+    else setInternalActive(clamped);
+  };
+  const metric = metrics[active];
 
   return (
     <div>
       {metrics.length > 1 && (
         <div className="mb-2 flex items-center justify-end gap-1.5">
+          <MetricJumpMenu metrics={metrics} active={active} onSelect={goTo} metricsMeta={metricsMeta} />
           <button
             type="button"
-            onClick={() => scrollTo(active - 1)}
+            onClick={() => goTo(active - 1)}
             disabled={active === 0}
             aria-label="Previous metric"
             className="focus-ring flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-[#7f959d] transition-all duration-150 hover:border-white/25 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100"
           >
             <CaretLeftIcon size={13} weight="bold" />
           </button>
-          <div className="flex gap-1">
-            {metrics.map((m, i) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => scrollTo(i)}
-                aria-label={`Go to slide ${i + 1}`}
-                aria-current={i === active}
-                className="focus-ring h-1.5 rounded-full transition-all duration-200"
-                style={{ width: i === active ? 16 : 6, background: i === active ? "#6ae499" : "rgba(255,255,255,0.15)" }}
-              />
-            ))}
-          </div>
           <button
             type="button"
-            onClick={() => scrollTo(active + 1)}
+            onClick={() => goTo(active + 1)}
             disabled={active === metrics.length - 1}
             aria-label="Next metric"
             className="focus-ring flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-[#7f959d] transition-all duration-150 hover:border-white/25 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100"
@@ -268,31 +254,23 @@ export default function MetricCarousel({
           </button>
         </div>
       )}
-      <div
-        ref={trackRef}
-        onScroll={onScroll}
-        className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {metrics.map((m, i) => (
-          <MetricSlide
-            key={m}
-            metric={m}
-            index={i}
-            total={metrics.length}
-            property={property}
-            rangeA={rangeA}
-            rangeB={rangeB}
-            filters={filters}
-            limit={limit}
-            chartType={chartType}
-            dims={slideDims[m] ?? defaultDims}
-            onDimsChange={(d) => setSlideDims((prev) => ({ ...prev, [m]: d }))}
-            colorPeriods={colorPeriods}
-            metadata={metadata}
-            metricsMeta={metricsMeta}
-          />
-        ))}
-      </div>
+      <MetricSlide
+        key={metric}
+        metric={metric}
+        index={active}
+        total={metrics.length}
+        property={property}
+        rangeA={rangeA}
+        rangeB={rangeB}
+        filters={filters}
+        limit={limit}
+        chartType={chartType}
+        dims={slideDims[metric] ?? defaultDims}
+        onDimsChange={(d) => setSlideDims((prev) => ({ ...prev, [metric]: d }))}
+        colorPeriods={colorPeriods}
+        metadata={metadata}
+        metricsMeta={metricsMeta}
+      />
     </div>
   );
 }
