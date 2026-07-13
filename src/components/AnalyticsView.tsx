@@ -4,8 +4,9 @@ import { TrophyIcon } from "@phosphor-icons/react";
 import { metricLabel } from "./ChartView";
 import { bucketOverlapsRange, detectGranularity } from "@/lib/dates";
 import { deltaPct, fmtDelta, fmtValue } from "@/lib/format";
+import { analyzeReport, type EngineInsight } from "@/lib/insightEngine";
 import { DELTA_DOWN, DELTA_UP, INK_MUTED } from "@/lib/theme";
-import type { ColorPeriod, MetaItem, ReportResponse } from "@/lib/types";
+import { metricIsInverted, type ColorPeriod, type MetaItem, type ReportResponse } from "@/lib/types";
 
 interface Props {
   data: ReportResponse;
@@ -13,13 +14,6 @@ interface Props {
   colorPeriods?: ColorPeriod[];
 }
 
-interface Insight {
-  id: string; // stable across date-range changes (unlike array index) — a metric's
-  // delta insight keeps its manually-dragged position even as the sentence
-  // text itself changes with the date range, as long as that metric still
-  // clears the significance bar.
-  text: string;
-}
 
 /** Sums a metric's current-period rows that fall inside a highlight period —
  *  used for the "which period performed best" comparison below. */
@@ -38,45 +32,15 @@ function periodTotal(
   return sum;
 }
 
+/** The full rule engine (see lib/insightEngine.ts), plus the highlight-period
+ *  comparison which needs this file's periodTotal helper. */
 export function buildInsights(
   data: ReportResponse,
   metricsMeta: MetaItem[] | undefined,
   colorPeriods: ColorPeriod[] | undefined
-): Insight[] {
-  const out: Insight[] = [];
-  const hasCompare = !!data.rangeB;
+): EngineInsight[] {
+  const out = analyzeReport(data, metricsMeta);
   const granularity = detectGranularity(data.dimensions?.length ? data.dimensions : data.dimension ? [data.dimension] : []);
-
-  // period-over-period, per metric — only sentences that clear a 5% bar (matches
-  // the PRD's own "meaningfully higher/lower" threshold for auto-generated insights)
-  if (hasCompare) {
-    data.metrics.forEach((m, i) => {
-      const a = data.totalsA[i] ?? 0;
-      const b = data.totalsB?.[i];
-      const d = deltaPct(a, b);
-      if (d !== null && Math.abs(d) > 5) {
-        const type = data.metricHeaders[i]?.type;
-        out.push({
-          id: `delta:${m}`,
-          text: `${metricLabel(m, metricsMeta)} is ${d > 0 ? "up" : "down"} ${Math.abs(d).toFixed(1)}% vs the previous period (${fmtValue(a, type, data.currencyCode)} vs ${fmtValue(b ?? 0, type, data.currencyCode)}).`,
-        });
-      }
-    });
-
-    // cross-metric: which one moved the most, when there's more than one to compare
-    if (data.metrics.length >= 2) {
-      const deltas = data.metrics
-        .map((m, i) => ({ m, i, d: deltaPct(data.totalsA[i] ?? 0, data.totalsB?.[i]) }))
-        .filter((x): x is { m: string; i: number; d: number } => x.d !== null);
-      if (deltas.length >= 2) {
-        const fastest = deltas.reduce((a, b) => (Math.abs(b.d) > Math.abs(a.d) ? b : a));
-        out.push({
-          id: "fastest-mover",
-          text: `${metricLabel(fastest.m, metricsMeta)} moved the most of your selected metrics, ${fmtDelta(fastest.d)} vs the previous period.`,
-        });
-      }
-    }
-  }
 
   // best vs worst highlight period, per metric
   if (colorPeriods && colorPeriods.length >= 2 && granularity) {
@@ -91,7 +55,11 @@ export function buildInsights(
       const type = data.metricHeaders[i]?.type;
       out.push({
         id: `highlight:${m}`,
-        text: `For ${metricLabel(m, metricsMeta)}, "${best.period.label || "an unnamed period"}" outperforms "${worst.period.label || "an unnamed period"}" by ${upPct.toFixed(1)}% (${fmtValue(best.total, type, data.currencyCode)} vs ${fmtValue(worst.total, type, data.currencyCode)}).`,
+        severity: "info",
+        category: "trend",
+        score: 25,
+        title: `"${best.period.label || "Unnamed period"}" was your strongest highlighted period for ${metricLabel(m, metricsMeta)}`,
+        text: `It beat "${worst.period.label || "an unnamed period"}" by ${upPct.toFixed(1)}% (${fmtValue(best.total, type, data.currencyCode)} vs ${fmtValue(worst.total, type, data.currencyCode)}).`,
       });
     });
   }
@@ -99,13 +67,33 @@ export function buildInsights(
   return out;
 }
 
-/** One insight sentence's content — no section wrapper, so it can render
- *  inside whichever entry section it's currently placed in (see EntryCard). */
-export function InsightBubble({ text }: { text: string }) {
+const SEVERITY_DOT: Record<EngineInsight["severity"], string> = {
+  critical: DELTA_DOWN,
+  good: DELTA_UP,
+  warning: "#e6a23c", // existing brand amber (METRIC_COLORS)
+  info: "#6ae499",
+};
+
+/** One insight's content — no section wrapper, so it can render inside
+ *  whichever entry section it's currently placed in (see EntryCard). Dot
+ *  color encodes severity; headline first so a client can scan, numbers
+ *  underneath, and the → line is the action when the rule carries one. */
+export function InsightBubble({ insight }: { insight: EngineInsight }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-xs text-[#c2d1d5]">
-      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "#6ae499" }} />
-      {text}
+    <div className="rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-xs">
+      <div className="flex items-start gap-2">
+        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: SEVERITY_DOT[insight.severity] }} />
+        <span className="font-semibold leading-snug text-white">{insight.title}</span>
+      </div>
+      <p className="mt-0.5 pl-3.5 leading-snug text-[#c2d1d5]">{insight.text}</p>
+      {insight.recommendation && (
+        <div className="mt-1 flex items-start gap-2 pl-3.5">
+          <span className="shrink-0 text-[#6ae499]">→</span>
+          <span className="leading-snug" style={{ color: INK_MUTED }}>
+            {insight.recommendation}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -202,13 +190,14 @@ export function CompareMetricRow({ apiName, data, metricsMeta }: CompareRowProps
   const b = data.totalsB?.[i];
   const d = deltaPct(a, b);
   const type = data.metricHeaders[i]?.type;
+  const good = d !== null && (metricIsInverted(apiName) ? d < 0 : d > 0);
   return (
     <div className="flex items-center justify-between rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-xs">
       <span className="truncate text-[#c2d1d5]">{metricLabel(apiName, metricsMeta)}</span>
       <span className="flex shrink-0 items-center gap-2 tabular-nums">
         <span className="font-semibold text-white">{fmtValue(a, type, data.currencyCode)}</span>
         {d !== null && (
-          <span style={{ color: d < 0 ? DELTA_DOWN : DELTA_UP }} className="font-medium">
+          <span style={{ color: good || d === 0 ? DELTA_UP : DELTA_DOWN }} className="font-medium">
             {fmtDelta(d)}
           </span>
         )}

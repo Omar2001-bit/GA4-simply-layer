@@ -5,7 +5,7 @@ import { metricLabel } from "./ChartView";
 import { detectGranularity } from "@/lib/dates";
 import { deltaPct, fmtBucketLabel, fmtDelta, fmtValue, humanize } from "@/lib/format";
 import { DELTA_DOWN, DELTA_UP } from "@/lib/theme";
-import type { MetaItem, ReportResponse } from "@/lib/types";
+import { metricIsInverted, type MetaItem, type ReportResponse } from "@/lib/types";
 
 interface Props {
   data: ReportResponse;
@@ -13,9 +13,13 @@ interface Props {
   compact?: boolean;
 }
 
-export function Delta({ value }: { value: number | null }) {
+/** `invert` flips the good/bad coloring for metrics where more is worse
+ *  (cart removals, refunds…): an increase reads red, a decrease green. The
+ *  arrow still follows the sign — only the judgment color inverts. */
+export function Delta({ value, invert }: { value: number | null; invert?: boolean }) {
   if (value === null) return <span className="text-[#7f959d]">–</span>;
-  const color = value < 0 ? DELTA_DOWN : DELTA_UP;
+  const good = invert ? value < 0 : value > 0;
+  const color = value === 0 ? DELTA_UP : good ? DELTA_UP : DELTA_DOWN;
   return (
     <span style={{ color }} className="inline-flex items-center gap-0.5 font-medium tabular-nums">
       {value !== 0 &&
@@ -51,7 +55,7 @@ export function KpiTileContent({ apiName, data, metricsMeta, compact }: TileProp
       </div>
       {data.rangeB && (
         <div className="mt-1 flex items-baseline gap-2 text-xs">
-          <Delta value={deltaPct(a, b)} />
+          <Delta value={deltaPct(a, b)} invert={metricIsInverted(apiName)} />
           <span className="text-[#7f959d]">vs {fmtValue(b ?? 0, type, data.currencyCode)}</span>
         </div>
       )}
@@ -118,7 +122,7 @@ export default function NumbersView({ data, metricsMeta }: Props) {
                   const a = r.a[mi] ?? 0;
                   const b = r.b?.[mi];
                   return hasCompare ? (
-                    <FragmentCells key={m} a={a} b={b} type={type} currencyCode={data.currencyCode} />
+                    <FragmentCells key={m} a={a} b={b} type={type} currencyCode={data.currencyCode} invert={metricIsInverted(m)} />
                   ) : (
                     <td key={m} className="px-4 py-2.5 text-right tabular-nums text-white">
                       {fmtValue(a, type, data.currencyCode)}
@@ -144,7 +148,19 @@ function FragmentHeads() {
   );
 }
 
-function FragmentCells({ a, b, type, currencyCode }: { a: number; b?: number; type?: string; currencyCode?: string }) {
+function FragmentCells({
+  a,
+  b,
+  type,
+  currencyCode,
+  invert,
+}: {
+  a: number;
+  b?: number;
+  type?: string;
+  currencyCode?: string;
+  invert?: boolean;
+}) {
   return (
     <>
       <td className="px-2 py-2.5 text-right tabular-nums text-white">{fmtValue(a, type, currencyCode)}</td>
@@ -152,7 +168,7 @@ function FragmentCells({ a, b, type, currencyCode }: { a: number; b?: number; ty
         {b === undefined ? "–" : fmtValue(b, type, currencyCode)}
       </td>
       <td className="px-2 py-2.5 text-right">
-        <Delta value={deltaPct(a, b)} />
+        <Delta value={deltaPct(a, b)} invert={invert} />
       </td>
     </>
   );

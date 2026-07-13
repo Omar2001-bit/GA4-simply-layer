@@ -40,6 +40,7 @@ import {
   eventMetricName,
   isConvRateMetric,
   isEventMetric,
+  metricIsInverted,
   type ChartType,
   type ColorPeriod,
   type MetaItem,
@@ -162,6 +163,7 @@ function ChartTooltip({
   granularity,
   rangeA,
   rangeB,
+  invert,
 }: {
   active?: boolean;
   payload?: { payload: Datum }[];
@@ -172,10 +174,12 @@ function ChartTooltip({
   granularity: TimeGranularity | null;
   rangeA: { startDate: string; endDate: string };
   rangeB?: { startDate: string; endDate: string } | null;
+  invert?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   const delta = deltaPct(d.a, d.b);
+  const deltaGood = delta !== null && (invert ? delta < 0 : delta > 0);
   const isBucketed = granularity !== null && granularity !== "date";
   const countA = isBucketed && d.key ? bucketDayCount(granularity!, d.key, rangeA.startDate, rangeA.endDate) : 0;
   const countB =
@@ -222,7 +226,7 @@ function ChartTooltip({
             </div>
           )}
           <div
-            style={{ color: delta !== null && delta < 0 ? DELTA_DOWN : DELTA_UP }}
+            style={{ color: deltaGood || delta === 0 ? DELTA_UP : DELTA_DOWN }}
             className="mt-1 text-right font-semibold"
           >
             {fmtDelta(delta)}
@@ -249,6 +253,7 @@ function TotalsOnlyView({
   const b = data.totalsB?.[metricIndex];
   const type = data.metricHeaders[metricIndex]?.type;
   const delta = deltaPct(a, b);
+  const invert = metricIsInverted(data.metrics[metricIndex] ?? "");
   return (
     <div className="animate-fade-in flex h-full min-h-[160px] flex-col items-center justify-center gap-2 px-4 text-center">
       <div className="text-xs uppercase tracking-[0.1em]" style={{ color: INK_MUTED }}>
@@ -258,7 +263,7 @@ function TotalsOnlyView({
         {fmtValue(a, type, data.currencyCode)}
       </div>
       {delta !== null && (
-        <div style={{ color: delta < 0 ? DELTA_DOWN : DELTA_UP }} className="text-xs font-medium">
+        <div style={{ color: (invert ? delta < 0 : delta > 0) || delta === 0 ? DELTA_UP : DELTA_DOWN }} className="text-xs font-medium">
           {fmtDelta(delta)} vs previous
         </div>
       )}
@@ -289,6 +294,7 @@ export default function ChartView({
   const dimList = data.dimensions?.length ? data.dimensions : data.dimension ? [data.dimension] : [];
   const isTotalsOnly = dimList.length === 0 || (data.rows.length === 1 && data.rows[0]?.dim === "total");
   const granularity = detectGranularity(dimList);
+  const inverted = metricIsInverted(metricName);
   const chartTooltip = (
     <ChartTooltip
       metricType={metricType}
@@ -297,6 +303,7 @@ export default function ChartView({
       granularity={granularity}
       rangeA={data.rangeA}
       rangeB={data.rangeB}
+      invert={inverted}
     />
   );
 
@@ -313,7 +320,10 @@ export default function ChartView({
           {fmtValue(a, metricType, data.currencyCode)}
         </div>
         {delta !== null && (
-          <div style={{ color: delta < 0 ? DELTA_DOWN : DELTA_UP }} className="text-sm font-medium">
+          <div
+            style={{ color: (inverted ? delta < 0 : delta > 0) || delta === 0 ? DELTA_UP : DELTA_DOWN }}
+            className="text-sm font-medium"
+          >
             {fmtDelta(delta)} vs previous ({fmtValue(b ?? 0, metricType, data.currencyCode)})
           </div>
         )}

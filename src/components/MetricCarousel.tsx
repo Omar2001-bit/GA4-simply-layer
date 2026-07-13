@@ -9,15 +9,16 @@ import { detectGranularity, granularityDims, type TimeGranularity } from "@/lib/
 import { deltaPct, fmtDelta, fmtValue } from "@/lib/format";
 import { DELTA_DOWN, DELTA_UP, INK_MUTED } from "@/lib/theme";
 import { useReport } from "@/lib/useReport";
-import type {
-  ChartType,
-  ColorPeriod,
-  CompareSel,
-  DateRangeSel,
-  FilterClause,
-  MetaItem,
-  MetadataResponse,
-  ReportConfig,
+import {
+  metricIsInverted,
+  type ChartType,
+  type ColorPeriod,
+  type CompareSel,
+  type DateRangeSel,
+  type FilterClause,
+  type MetaItem,
+  type MetadataResponse,
+  type ReportConfig,
 } from "@/lib/types";
 
 interface Props {
@@ -97,6 +98,7 @@ function MetricSlide({
   );
   const { data, error, loading } = useReport(config);
   const headlineDelta = data?.totalsB ? deltaPct(data.totalsA[0] ?? 0, data.totalsB[0]) : null;
+  const headlineGood = headlineDelta !== null && (metricIsInverted(metric) ? headlineDelta < 0 : headlineDelta > 0);
   const type = data?.metricHeaders[0]?.type;
   // "Day/Week/Month" is really just three quick presets for `dims` — deriving
   // the active one from `dims` (instead of separate state) means picking a
@@ -126,7 +128,7 @@ function MetricSlide({
                       vs {fmtValue(data.totalsB[0] ?? 0, type, data.currencyCode)}
                     </span>
                     {headlineDelta !== null && (
-                      <span style={{ color: headlineDelta < 0 ? DELTA_DOWN : DELTA_UP }} className="font-semibold">
+                      <span style={{ color: headlineGood || headlineDelta === 0 ? DELTA_UP : DELTA_DOWN }} className="font-semibold">
                         {fmtDelta(headlineDelta)}
                       </span>
                     )}

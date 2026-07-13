@@ -14,13 +14,14 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { ArrowLeftIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, CaretRightIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildInsights, HighlightPeriodsSection } from "./AnalyticsView";
 import DateControls from "./DateControls";
 import EntryCard from "./EntryCard";
+import FunnelView from "./FunnelView";
 import MetricCarousel from "./MetricCarousel";
 import NumbersView from "./NumbersView";
 import ReportEditor from "./ReportEditor";
@@ -43,6 +44,7 @@ import {
   type ReportConfig,
   type ReportLayout,
   type ReportResponse,
+  type SectionId,
 } from "@/lib/types";
 
 interface Props {
@@ -56,6 +58,45 @@ interface Props {
 const ZONE_PREFIX = "zone:";
 const GAP_PREFIX = "gap:";
 const GRAPH_ANCHOR_ID = "graph-view-anchor";
+
+/** Section header that folds its content — count badge keeps the collapsed
+ *  state informative ("Insights · 14") so clients know something's inside. */
+function CollapsibleHeader({
+  id,
+  icon,
+  title,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  id: SectionId;
+  icon?: ReactNode;
+  title: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: (id: SectionId) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(id)}
+      aria-expanded={!collapsed}
+      className={`focus-ring flex items-center gap-1.5 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d] transition-colors duration-150 hover:text-white ${
+        collapsed ? "" : "mb-2"
+      }`}
+    >
+      <CaretRightIcon
+        size={11}
+        weight="bold"
+        className="shrink-0 transition-transform duration-150"
+        style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+      />
+      {icon}
+      {title}
+      {count > 0 && <span className="font-normal normal-case tracking-normal text-[#7f959d]">· {count}</span>}
+    </button>
+  );
+}
 
 /** Makes an otherwise-empty area of a card container a valid drop target,
  *  and tints it green while a card hovers over it. */
@@ -137,6 +178,13 @@ export default function ReportCanvas({
     setSyncedChartType(config.chartType);
     setChartType(config.chartType);
   }
+  // Insights and Compare metrics start folded — they're the densest blocks,
+  // and a client scanning the report opens them when they want the detail.
+  const [collapsed, setCollapsed] = useState<Partial<Record<SectionId, boolean>>>({
+    insights: true,
+    compare: true,
+  });
+  const toggleCollapsed = (id: SectionId) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
   const [properties, setProperties] = useState<PropertySummary[]>([]);
   const [metadata, setMetadata] = useState<MetadataResponse | null>(null);
   const [saving, setSaving] = useState(false);
@@ -151,7 +199,7 @@ export default function ReportCanvas({
   const { data, error, loading } = useReport(config);
   const hasMetrics = config.metrics.length > 0;
   const insights = data ? buildInsights(data, metadata?.metrics, config.colorPeriods) : [];
-  const insightsById = new Map(insights.map((i) => [i.id, i.text]));
+  const insightsById = new Map(insights.map((i) => [i.id, i]));
   const layout = reconcileLayout(
     config.layout,
     config.metrics,
@@ -429,23 +477,48 @@ export default function ReportCanvas({
       case "insights":
         return (
           <>
-            <h3 className="mb-2 flex items-center gap-1.5 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">
-              <LightbulbIcon size={13} />
-              Insights
-            </h3>
-            {data ? (
-              (block.entries?.length ?? 0) === 0 ? (
-                <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
-                  <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">
-                    Nothing here — auto-written observations appear once you add a comparison period or a highlight
-                    period, or drag a card in from another section.
-                  </p>
-                </DroppableZone>
+            <CollapsibleHeader
+              id="insights"
+              icon={<LightbulbIcon size={13} />}
+              title="Insights"
+              count={block.entries?.length ?? 0}
+              collapsed={!!collapsed.insights}
+              onToggle={toggleCollapsed}
+            />
+            {!collapsed.insights &&
+              (data ? (
+                (block.entries?.length ?? 0) === 0 ? (
+                  <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
+                    <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">
+                      Nothing here — auto-written observations appear once you add a comparison period or a highlight
+                      period, or drag a card in from another section.
+                    </p>
+                  </DroppableZone>
+                ) : (
+                  renderEntries(data, block, "row", "space-y-1.5")
+                )
               ) : (
-                renderEntries(data, block, "row", "space-y-1.5")
-              )
+                <div className="h-24" />
+              ))}
+          </>
+        );
+      case "funnels":
+        return (
+          <>
+            <h2 className="mb-3 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">
+              Funnels
+            </h2>
+            {(config.funnels?.length ?? 0) === 0 ? (
+              <p className="text-xs text-[#7f959d]">
+                No funnels yet — define event steps in the editor and GA4&rsquo;s own funnel engine computes
+                who made it through each one.
+              </p>
             ) : (
-              <div className="h-24" />
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                {config.funnels!.map((fn) => (
+                  <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} />
+                ))}
+              </div>
             )}
           </>
         );
@@ -458,22 +531,27 @@ export default function ReportCanvas({
       case "compare":
         return (
           <>
-            <h2 className="mb-2 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">
-              Compare metrics
-            </h2>
-            {data ? (
-              (block.entries?.length ?? 0) === 0 ? (
-                <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
-                  <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">
-                    Drag a card here from another section to compare it.
-                  </p>
-                </DroppableZone>
+            <CollapsibleHeader
+              id="compare"
+              title="Compare metrics"
+              count={block.entries?.length ?? 0}
+              collapsed={!!collapsed.compare}
+              onToggle={toggleCollapsed}
+            />
+            {!collapsed.compare &&
+              (data ? (
+                (block.entries?.length ?? 0) === 0 ? (
+                  <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
+                    <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">
+                      Drag a card here from another section to compare it.
+                    </p>
+                  </DroppableZone>
+                ) : (
+                  renderEntries(data, block, "row", "grid grid-cols-1 gap-2 sm:grid-cols-2")
+                )
               ) : (
-                renderEntries(data, block, "row", "grid grid-cols-1 gap-2 sm:grid-cols-2")
-              )
-            ) : (
-              <div className="h-24" />
-            )}
+                <div className="h-24" />
+              ))}
           </>
         );
     }
