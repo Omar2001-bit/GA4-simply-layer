@@ -19,7 +19,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { bucketDayCount, bucketOverlapsRange, detectGranularity, type TimeGranularity } from "@/lib/dates";
+import { bucketDayCount, bucketOverlapsRange, bucketSpan, detectGranularity, type TimeGranularity } from "@/lib/dates";
 import { fmtBucketLabel, fmtCompact, fmtDelta, fmtValue, deltaPct, humanize, humanizeEvent } from "@/lib/format";
 import {
   BASELINE,
@@ -130,7 +130,15 @@ function buildTimelineData(
   if (prev.size === 0 || curr.size === 0) return null;
   const prevRows = [...prev.values()].filter((p) => !curr.has(p.key)).sort((x, y) => (x.key < y.key ? -1 : 1));
   const currRows = [...curr.values()].sort((x, y) => (x.key < y.key ? -1 : 1));
-  if (bridge && prevRows.length > 0) currRows[0] = { ...currRows[0], b: currRows[0].a };
+  // connect the phases ONLY when they actually touch — overlapping or
+  // back-to-back buckets. A real calendar gap between the two ranges stays
+  // a visible gap in the line; drawing through it would invent data.
+  if (bridge && prevRows.length > 0) {
+    const prevEnd = bucketSpan(g, prevRows[prevRows.length - 1].key).end;
+    const currStart = bucketSpan(g, currRows[0].key).start;
+    const gapDays = (Date.parse(currStart) - Date.parse(prevEnd)) / 86_400_000;
+    if (gapDays <= 1) currRows[0] = { ...currRows[0], b: currRows[0].a };
+  }
   return { rows: [...prevRows, ...currRows] };
 }
 
