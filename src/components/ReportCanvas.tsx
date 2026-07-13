@@ -19,6 +19,7 @@ import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildInsights, HighlightPeriodsSection } from "./AnalyticsView";
+import type { GraphViewMode } from "./ChartView";
 import DateControls from "./DateControls";
 import EntryCard from "./EntryCard";
 import FunnelView from "./FunnelView";
@@ -185,6 +186,10 @@ export default function ReportCanvas({
     compare: true,
   });
   const toggleCollapsed = (id: SectionId) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+  // "overlay": x-axis is the current period, previous drawn on top aligned.
+  // "timeline": one chronological axis from previous-period start through
+  // current-period end, dashed phase flowing into solid.
+  const [graphView, setGraphView] = useState<GraphViewMode>("overlay");
   const [properties, setProperties] = useState<PropertySummary[]>([]);
   const [metadata, setMetadata] = useState<MetadataResponse | null>(null);
   const [saving, setSaving] = useState(false);
@@ -410,7 +415,36 @@ export default function ReportCanvas({
           <div id={GRAPH_ANCHOR_ID} className="scroll-mt-20">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 pr-8">
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">Graph view</h2>
-              <div className="max-w-full overflow-x-auto">
+              <div className="flex max-w-full flex-wrap items-center gap-2 overflow-x-auto">
+                {config.rangeB.preset !== "none" && (
+                  <div className="flex w-max overflow-hidden rounded-lg border border-white/10">
+                    {(
+                      [
+                        { value: "overlay", label: "Overlay" },
+                        { value: "timeline", label: "Timeline" },
+                      ] as { value: GraphViewMode; label: string }[]
+                    ).map((v) => (
+                      <button
+                        key={v.value}
+                        type="button"
+                        onClick={() => setGraphView(v.value)}
+                        aria-pressed={graphView === v.value}
+                        title={
+                          v.value === "overlay"
+                            ? "Current period on the x-axis, previous period drawn on top"
+                            : "One continuous axis from the previous period into the current one"
+                        }
+                        className={`focus-ring whitespace-nowrap px-2.5 py-1.5 text-xs transition-colors duration-150 ${
+                          graphView === v.value
+                            ? "bg-[#6ae499] text-[#0e1c26]"
+                            : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
+                        }`}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex w-max overflow-hidden rounded-lg border border-white/10">
                   {CHART_TYPES.filter((c) => c.value !== "table" && c.value !== "scorecard").map((c) => (
                     <button
@@ -438,6 +472,7 @@ export default function ReportCanvas({
               filters={config.filters}
               limit={config.limit}
               chartType={chartType}
+              viewMode={graphView}
               defaultDims={configDimensions(config)}
               colorPeriods={config.colorPeriods}
               metadata={metadata}
@@ -465,7 +500,7 @@ export default function ReportCanvas({
                   renderEntries(data, block, "tile", "grid grid-cols-2 md:grid-cols-4 gap-3")
                 )}
                 <div className="mt-4">
-                  <NumbersView data={data} metricsMeta={metadata?.metrics} />
+                  <NumbersView data={data} metricsMeta={metadata?.metrics} colorPeriods={config.colorPeriods} />
                 </div>
               </>
             ) : (

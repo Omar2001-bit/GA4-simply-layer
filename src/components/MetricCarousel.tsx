@@ -2,7 +2,7 @@
 
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
-import ChartView, { metricLabel } from "./ChartView";
+import ChartView, { metricLabel, type GraphViewMode } from "./ChartView";
 import MetaPicker from "./MetaPicker";
 import MetricJumpMenu from "./MetricJumpMenu";
 import { detectGranularity, granularityDims, type TimeGranularity } from "@/lib/dates";
@@ -29,6 +29,7 @@ interface Props {
   filters?: FilterClause[];
   limit: number;
   chartType: ChartType;
+  viewMode?: GraphViewMode;
   defaultDims: string[]; // the report's own breakdown — each slide's starting point
   colorPeriods?: ColorPeriod[];
   metadata: MetadataResponse | null;
@@ -55,6 +56,7 @@ interface SlideProps {
   filters?: FilterClause[];
   limit: number;
   chartType: ChartType;
+  viewMode?: GraphViewMode;
   dims: string[];
   onDimsChange: (dims: string[]) => void;
   colorPeriods?: ColorPeriod[];
@@ -72,6 +74,7 @@ function MetricSlide({
   filters,
   limit,
   chartType,
+  viewMode,
   dims,
   onDimsChange,
   colorPeriods,
@@ -179,6 +182,7 @@ function MetricSlide({
             <ChartView
               data={data}
               chartType={chartType}
+              viewMode={viewMode}
               metricIndex={0}
               metricsMeta={metricsMeta}
               colorPeriods={colorPeriods}
@@ -209,6 +213,7 @@ export default function MetricCarousel({
   filters,
   limit,
   chartType,
+  viewMode,
   defaultDims,
   colorPeriods,
   metadata,
@@ -267,6 +272,7 @@ export default function MetricCarousel({
         filters={filters}
         limit={limit}
         chartType={chartType}
+        viewMode={viewMode}
         dims={slideDims[metric] ?? defaultDims}
         onDimsChange={(d) => setSlideDims((prev) => ({ ...prev, [metric]: d }))}
         colorPeriods={colorPeriods}

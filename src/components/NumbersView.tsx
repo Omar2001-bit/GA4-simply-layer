@@ -2,15 +2,16 @@
 
 import { CaretDownIcon, CaretUpIcon, TrayIcon } from "@phosphor-icons/react";
 import { metricLabel } from "./ChartView";
-import { detectGranularity } from "@/lib/dates";
+import { bucketOverlapsRange, detectGranularity } from "@/lib/dates";
 import { deltaPct, fmtBucketLabel, fmtDelta, fmtValue, humanize } from "@/lib/format";
 import { DELTA_DOWN, DELTA_UP } from "@/lib/theme";
-import { metricIsInverted, type MetaItem, type ReportResponse } from "@/lib/types";
+import { metricIsInverted, type ColorPeriod, type MetaItem, type ReportResponse } from "@/lib/types";
 
 interface Props {
   data: ReportResponse;
   metricsMeta?: MetaItem[]; // for pretty names
   compact?: boolean;
+  colorPeriods?: ColorPeriod[]; // highlight-period tinting on date rows
 }
 
 /** `invert` flips the good/bad coloring for metrics where more is worse
@@ -64,14 +65,20 @@ export function KpiTileContent({ apiName, data, metricsMeta, compact }: TileProp
 }
 
 /** The dimension-breakdown table below the KPI grid — always driven by the
- *  report's full metric list, unrelated to the draggable card arrangement. */
-export default function NumbersView({ data, metricsMeta }: Props) {
+ *  report's full metric list, unrelated to the draggable card arrangement.
+ *  Rows falling inside a highlight period get tinted with that period's
+ *  color, so the same phases marked on the graphs read here too. */
+export default function NumbersView({ data, metricsMeta, colorPeriods }: Props) {
   const hasCompare = !!data.rangeB;
   const dimList = data.dimensions ?? (data.dimension ? [data.dimension] : []);
   const granularity = detectGranularity(dimList);
   const hasDim = dimList.length > 0 && data.rows.length > 0 && data.rows[0].dim !== "total";
   const colCount = 1 + data.metrics.length * (hasCompare ? 3 : 1);
   if (!hasDim) return null;
+  const periodOf = (bucket: string): ColorPeriod | undefined =>
+    granularity && bucket
+      ? colorPeriods?.find((p) => bucketOverlapsRange(granularity, bucket, p.startDate, p.endDate))
+      : undefined;
   return (
     <div className="animate-fade-in overflow-x-auto rounded-xl border border-white/10 bg-[#0e1c26]">
       <table className="w-full text-sm">
@@ -104,12 +111,22 @@ export default function NumbersView({ data, metricsMeta }: Props) {
               </td>
             </tr>
           ) : (
-            data.rows.map((r, ri) => (
+            data.rows.map((r, ri) => {
+              const period = periodOf(r.dim);
+              return (
               <tr
                 key={`${r.dim}-${ri}`}
                 className="border-b border-white/5 transition-colors duration-100 last:border-0 hover:bg-white/[0.03]"
+                style={period ? { background: `${period.color}14` } : undefined}
               >
                 <td className="max-w-[280px] truncate px-4 py-2.5 text-[#c2d1d5]">
+                  {period && (
+                    <span
+                      className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                      style={{ background: period.color }}
+                      title={period.label || "Highlight period"}
+                    />
+                  )}
                   {granularity ? fmtBucketLabel(granularity, r.dim) : r.dim || "(not set)"}
                   {r.bDim && (
                     <span className="ml-2 text-xs text-[#7f959d]">
@@ -130,7 +147,8 @@ export default function NumbersView({ data, metricsMeta }: Props) {
                   );
                 })}
               </tr>
-            ))
+              );
+            })
           )}
         </tbody>
       </table>

@@ -14,6 +14,7 @@ import {
   Pie,
   PieChart,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -47,6 +48,8 @@ import {
   type ReportResponse,
 } from "@/lib/types";
 
+export type GraphViewMode = "overlay" | "timeline";
+
 interface Props {
   data: ReportResponse;
   chartType: ChartType;
@@ -55,6 +58,12 @@ interface Props {
   colorPeriods?: ColorPeriod[]; // named date-range highlights, see types.ts
   height?: number;
   compact?: boolean; // mini mode for dashboard cards
+  /** "overlay" (default): x-axis is the current period only, previous period
+   *  drawn on top day-aligned. "timeline": one continuous chronological
+   *  x-axis from the start of the previous period through the end of the
+   *  current one — previous phase dashed, current phase solid, with a
+   *  divider where the current period begins. */
+  viewMode?: GraphViewMode;
 }
 
 interface Datum {
@@ -62,7 +71,7 @@ interface Datum {
   bName?: string;
   key: string; // raw bucket key, pre-label-formatting — tooltip needs this for day-count math
   bKey?: string;
-  a: number;
+  a?: number;
   b?: number;
 }
 
@@ -85,6 +94,30 @@ function buildData(data: ReportResponse, metricIndex: number, granularity: TimeG
     a: r.a[metricIndex] ?? 0,
     b: r.b ? r.b[metricIndex] ?? 0 : undefined,
   }));
+}
+
+/** One continuous chronological axis: previous-period buckets first (their
+ *  real dates, values in `b`), then current-period buckets (values in `a`).
+ *  Where the two ranges overlap (growing-baseline compares), the current
+ *  bucket wins so a date never appears twice. Returns null when the data
+ *  can't support a timeline (no compare, or no aligned previous dates). */
+function buildTimelineData(
+  data: ReportResponse,
+  metricIndex: number,
+  granularity: TimeGranularity | null
+): { rows: Datum[]; currentStart: string } | null {
+  if (!granularity || !data.rangeB) return null;
+  const g = granularity;
+  const curr = new Map<string, Datum>();
+  const prev = new Map<string, Datum>();
+  for (const r of data.rows) {
+    curr.set(r.dim, { name: fmtBucketLabel(g, r.dim), key: r.dim, a: r.a[metricIndex] ?? 0 });
+    if (r.bDim && r.b) prev.set(r.bDim, { name: fmtBucketLabel(g, r.bDim), key: r.bDim, b: r.b[metricIndex] ?? 0 });
+  }
+  if (prev.size === 0 || curr.size === 0) return null;
+  const prevRows = [...prev.values()].filter((p) => !curr.has(p.key)).sort((x, y) => (x.key < y.key ? -1 : 1));
+  const currRows = [...curr.values()].sort((x, y) => (x.key < y.key ? -1 : 1));
+  return { rows: [...prevRows, ...currRows], currentStart: currRows[0].name };
 }
 
 /** Which contiguous x-axis span (by row label) each color period covers, so
@@ -164,6 +197,7 @@ function ChartTooltip({
   rangeA,
   rangeB,
   invert,
+  timeline,
 }: {
   active?: boolean;
   payload?: { payload: Datum }[];
@@ -175,16 +209,43 @@ function ChartTooltip({
   rangeA: { startDate: string; endDate: string };
   rangeB?: { startDate: string; endDate: string } | null;
   invert?: boolean;
+  timeline?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
-  const delta = deltaPct(d.a, d.b);
+
+  // timeline rows carry ONE phase's value each — show it with its phase name
+  if (timeline) {
+    const isCurrent = d.a !== undefined;
+    const v = isCurrent ? d.a : d.b;
+    return (
+      <div style={tooltipStyle} className="px-3 py-2 shadow-xl">
+        <div style={{ color: INK_SECONDARY }} className="mb-1.5 font-semibold">
+          {label}
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-1.5" style={{ color: INK_MUTED }}>
+            {isCurrent ? (
+              <span style={{ background: SERIES_A }} className="inline-block h-2 w-2 rounded-full" />
+            ) : (
+              <span className="inline-block h-2 w-2 rounded-full" style={{ border: `1.5px dashed ${SERIES_B}` }} />
+            )}
+            {isCurrent ? "Current period" : "Previous period"}
+          </span>
+          <span className="font-semibold tabular-nums">{fmtValue(v ?? 0, metricType, currencyCode)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const aVal = d.a ?? 0;
+  const delta = deltaPct(aVal, d.b);
   const deltaGood = delta !== null && (invert ? delta < 0 : delta > 0);
   const isBucketed = granularity !== null && granularity !== "date";
   const countA = isBucketed && d.key ? bucketDayCount(granularity!, d.key, rangeA.startDate, rangeA.endDate) : 0;
   const countB =
     isBucketed && d.bKey && rangeB ? bucketDayCount(granularity!, d.bKey, rangeB.startDate, rangeB.endDate) : 0;
-  const avgA = countA > 0 ? d.a / countA : d.a;
+  const avgA = countA > 0 ? aVal / countA : aVal;
   const avgB = countB > 0 && d.b !== undefined ? d.b / countB : d.b;
   return (
     <div style={tooltipStyle} className="px-3 py-2 shadow-xl">
@@ -196,7 +257,7 @@ function ChartTooltip({
           <span style={{ background: SERIES_A }} className="inline-block h-2 w-2 rounded-full" />
           {isBucketed ? "Total" : "Current"}
         </span>
-        <span className="font-semibold tabular-nums">{fmtValue(d.a, metricType, currencyCode)}</span>
+        <span className="font-semibold tabular-nums">{fmtValue(aVal, metricType, currencyCode)}</span>
       </div>
       {isBucketed && (
         <div className="flex items-center justify-between gap-4 pl-3.5 text-[11px]" style={{ color: INK_SECONDARY }}>
@@ -283,6 +344,7 @@ export default function ChartView({
   colorPeriods,
   height = 320,
   compact = false,
+  viewMode = "overlay",
 }: Props) {
   const metricType = data.metricHeaders[metricIndex]?.type;
   const metricName = data.metrics[metricIndex] ?? "";
@@ -295,6 +357,12 @@ export default function ChartView({
   const isTotalsOnly = dimList.length === 0 || (data.rows.length === 1 && data.rows[0]?.dim === "total");
   const granularity = detectGranularity(dimList);
   const inverted = metricIsInverted(metricName);
+  // timeline only makes sense for time-bucketed data with an aligned compare;
+  // anything else silently falls back to the overlay rendering
+  const timeline =
+    viewMode === "timeline" && (chartType === "line" || chartType === "area" || chartType === "bar")
+      ? buildTimelineData(data, metricIndex, granularity)
+      : null;
   const chartTooltip = (
     <ChartTooltip
       metricType={metricType}
@@ -304,6 +372,7 @@ export default function ChartView({
       rangeA={data.rangeA}
       rangeB={data.rangeB}
       invert={inverted}
+      timeline={!!timeline}
     />
   );
 
@@ -336,6 +405,119 @@ export default function ChartView({
   // metric as a number instead of the old single-dot broken line.
   if (isTotalsOnly && (chartType === "line" || chartType === "area" || chartType === "bar" || chartType === "hbar")) {
     return <TotalsOnlyView data={data} metricIndex={metricIndex} metricsMeta={metricsMeta} />;
+  }
+
+  // ---- timeline rendering: previous phase (dashed) flows into current (solid) ----
+  if (timeline) {
+    const tRows = timeline.rows;
+    const tBands = periodBands(tRows, colorPeriods, granularity).map(({ period, x1, x2 }) => (
+      <ReferenceArea
+        key={period.id}
+        x1={x1}
+        x2={x2}
+        fill={period.color}
+        fillOpacity={0.1}
+        stroke={period.color}
+        strokeOpacity={0.35}
+        ifOverflow="visible"
+        label={{ value: period.label, position: "insideTopLeft", fill: period.color, fontSize: 10 }}
+      />
+    ));
+    const divider = (
+      <ReferenceLine
+        x={timeline.currentStart}
+        stroke={INK_MUTED}
+        strokeDasharray="4 4"
+        label={{ value: "current →", position: "insideTopRight", fill: INK_MUTED, fontSize: 10 }}
+      />
+    );
+    const shared = (
+      <>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        {tBands}
+        {divider}
+        <XAxis dataKey="name" tick={axisTick} stroke={BASELINE} interval="preserveStartEnd" />
+        <YAxis tick={axisTick} tickFormatter={yFmt} stroke={BASELINE} width={48} />
+        <Tooltip content={chartTooltip} cursor={chartType === "bar" ? { fill: "rgba(255,255,255,0.04)" } : undefined} />
+      </>
+    );
+    return (
+      <div>
+        <ResponsiveContainer width="100%" height={height}>
+          {chartType === "bar" ? (
+            <BarChart data={tRows} margin={{ right: 12 }}>
+              {shared}
+              <Bar
+                dataKey="b"
+                fill={SERIES_B}
+                fillOpacity={0.25}
+                stroke={SERIES_B}
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                radius={[4, 4, 0, 0]}
+                maxBarSize={22}
+              />
+              <Bar dataKey="a" fill={SERIES_A} radius={[4, 4, 0, 0]} maxBarSize={22} />
+            </BarChart>
+          ) : chartType === "area" ? (
+            <AreaChart data={tRows} margin={{ right: 12 }}>
+              <defs>
+                <linearGradient id="fillTimeline" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={SERIES_A} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={SERIES_A} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              {shared}
+              <Area
+                type="monotone"
+                dataKey="b"
+                stroke={SERIES_B}
+                strokeWidth={1.75}
+                strokeOpacity={0.85}
+                strokeDasharray="6 4"
+                fill="none"
+                dot={false}
+                connectNulls={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="a"
+                stroke={SERIES_A}
+                strokeWidth={2.5}
+                fill="url(#fillTimeline)"
+                dot={false}
+                connectNulls={false}
+              />
+            </AreaChart>
+          ) : (
+            <LineChart data={tRows} margin={{ right: 12 }}>
+              {shared}
+              <Line
+                type="monotone"
+                dataKey="b"
+                stroke={SERIES_B}
+                strokeWidth={1.75}
+                strokeOpacity={0.85}
+                strokeDasharray="6 4"
+                dot={false}
+                activeDot={{ r: 3.5 }}
+                connectNulls={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="a"
+                stroke={SERIES_A}
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4.5 }}
+                connectNulls={false}
+              />
+            </LineChart>
+          )}
+        </ResponsiveContainer>
+        {chips}
+      </div>
+    );
   }
 
   const rows = buildData(data, metricIndex, granularity);
@@ -372,7 +554,7 @@ export default function ChartView({
     const rest = rows.slice(8);
     const slices = [...top];
     if (rest.length) {
-      slices.push({ name: "Other", key: "", a: rest.reduce((s, r) => s + r.a, 0), b: undefined });
+      slices.push({ name: "Other", key: "", a: rest.reduce((s, r) => s + (r.a ?? 0), 0), b: undefined });
     }
     return (
       <ResponsiveContainer width="100%" height={height}>
