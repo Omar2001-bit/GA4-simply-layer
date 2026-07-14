@@ -34,7 +34,7 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
   const label =
     selected.length === 0
       ? allowNone
-        ? "None (totals only)"
+        ? "Choose a dimension"
         : placeholder
       : selected
           .map((s) => items.find((i) => i.apiName === s)?.uiName ?? s)

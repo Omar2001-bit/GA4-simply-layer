@@ -158,7 +158,7 @@ function MetricSlide({
                 </button>
               ))}
             </div>
-            <div className="w-full min-w-[9rem] flex-1 sm:w-40 sm:flex-none">
+            <div className="w-full min-w-[11.5rem] flex-1 sm:w-48 sm:flex-none">
               <MetaPicker
                 items={metadata?.dimensions ?? []}
                 selected={activeGranularity ? [] : dims}
