@@ -255,30 +255,27 @@ export interface PresetsFile {
 
 // ---- customizable report layout ----
 
-// "graph", "breakdown", and "highlights" are single-block sections — neither
-// has an atomic per-row unit to drag, so all three stay whole-section-only
-// draggable. "numbers", "compare", and "insights" are all entry containers:
-// any card can move freely between any of the three.
-export const SECTION_IDS = ["graph", "numbers", "breakdown", "insights", "funnels", "highlights", "compare"] as const;
+// "graph" and "funnels" are single-block sections — neither has an atomic
+// per-row unit to drag, so both stay whole-section-only draggable.
+// "numbers" and "insights" are entry containers: any card can move freely
+// between the two.
+export const SECTION_IDS = ["graph", "numbers", "insights", "funnels"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_TITLES: Record<SectionId, string> = {
   graph: "Graph view",
   numbers: "Numbers view",
-  breakdown: "Day-by-day breakdown",
   insights: "Insights",
   funnels: "Funnels",
-  highlights: "Highlight periods",
-  compare: "Compare metrics",
 };
 
-export const ENTRY_SECTIONS = ["numbers", "compare", "insights"] as const;
+export const ENTRY_SECTIONS = ["numbers", "insights"] as const;
 export type EntrySectionId = (typeof ENTRY_SECTIONS)[number];
 
-export type EntryKind = "kpi" | "compare" | "insight";
+export type EntryKind = "kpi" | "insight";
 
 export interface EntryRef {
-  kind: EntryKind; // "kpi"/"compare" -> id is a metric apiName; "insight" -> id is an insight id
+  kind: EntryKind; // "kpi" -> id is a metric apiName; "insight" -> id is an insight id
   id: string;
 }
 
@@ -288,17 +285,17 @@ export function entryKey(e: EntryRef): string {
 
 /** Default home section for an entry kind — where strays/new entries land. */
 export function homeSection(kind: EntryKind): EntrySectionId {
-  return kind === "kpi" ? "numbers" : kind === "compare" ? "compare" : "insights";
+  return kind === "kpi" ? "numbers" : "insights";
 }
 
-/** The page is an ordered list of blocks. A "section" block is one of the 5
+/** The page is an ordered list of blocks. A "section" block is one of the
  *  named sections (entry sections carry their card list inline); a "float"
  *  block is a free-standing card group living between sections — created by
  *  dropping a card into the gap between two blocks, removed automatically
  *  when its last card leaves. This is what lets a card sit ABOVE the graph
  *  while the Numbers section itself stays where it is. */
 export type LayoutBlock =
-  | { kind: "section"; id: SectionId; entries?: EntryRef[] } // entries only for numbers/compare/insights
+  | { kind: "section"; id: SectionId; entries?: EntryRef[] } // entries only for numbers/insights
   | { kind: "float"; id: string; entries: EntryRef[] };
 
 export function blockKey(b: LayoutBlock): string {
@@ -313,12 +310,6 @@ export function defaultLayout(metrics: string[]): ReportLayout {
   return {
     blocks: SECTION_IDS.map((id) => {
       if (id === "numbers") return { kind: "section", id, entries: metrics.map((m) => ({ kind: "kpi" as const, id: m })) };
-      if (id === "compare")
-        return {
-          kind: "section",
-          id,
-          entries: metrics.length >= 2 ? metrics.map((m) => ({ kind: "compare" as const, id: m })) : [],
-        };
       if (id === "insights") return { kind: "section", id, entries: [] };
       return { kind: "section", id };
     }),
@@ -339,7 +330,7 @@ function migrateToBlocks(raw: unknown, metrics: string[]): LayoutBlock[] {
     const sections = Array.isArray(asAny.sections) ? asAny.sections : [...SECTION_IDS];
     const entries = asAny.entries ?? {};
     return sections.map((id) => {
-      if (id === "numbers" || id === "compare" || id === "insights") {
+      if (id === "numbers" || id === "insights") {
         return { kind: "section" as const, id, entries: Array.isArray(entries[id]) ? entries[id]! : [] };
       }
       return { kind: "section" as const, id };
@@ -351,11 +342,13 @@ function migrateToBlocks(raw: unknown, metrics: string[]): LayoutBlock[] {
 /** Self-heals a layout against the report's current metric list and live
  *  insight ids — drops entries that no longer resolve to anything (a metric
  *  got removed from the report, or an insight no longer clears its
- *  significance bar for the current date range), dedupes an entry that
- *  somehow ended up in two places at once, appends newly-introduced entries
- *  to their default home section, removes float blocks that emptied out,
- *  and re-adds any missing sections. Safe to call on every render; only a
- *  real drag actually persists a layout. */
+ *  significance bar for the current date range, or its whole section was
+ *  removed from the app — e.g. an old saved report's "compare"/"breakdown"/
+ *  "highlights" blocks), dedupes an entry that somehow ended up in two
+ *  places at once, appends newly-introduced entries to their default home
+ *  section, removes float blocks that emptied out, and re-adds any missing
+ *  sections. Safe to call on every render; only a real drag actually
+ *  persists a layout. */
 export function reconcileLayout(layout: ReportLayout | undefined, metrics: string[], insightIds: string[]): ReportLayout {
   const rawBlocks = migrateToBlocks(layout, metrics);
   const metricSet = new Set(metrics);
@@ -378,18 +371,22 @@ export function reconcileLayout(layout: ReportLayout | undefined, metrics: strin
     if (b?.kind === "section" && (SECTION_IDS as readonly string[]).includes(b.id)) {
       if (seenSections.has(b.id)) continue;
       seenSections.add(b.id);
-      if (b.id === "numbers" || b.id === "compare" || b.id === "insights") {
+      if (b.id === "numbers" || b.id === "insights") {
         blocks.push({ kind: "section", id: b.id, entries: keep(b.entries) });
       } else {
         blocks.push({ kind: "section", id: b.id });
       }
     } else if (b?.kind === "float" && typeof b.id === "string") {
+      // a float block's entries still get filtered through `keep` even though
+      // the block itself came from an old/removed section — a stray card
+      // that had been dragged out of "compare" before it was removed stays
+      // visible here instead of silently vanishing
       blocks.push({ kind: "float", id: b.id, entries: keep(b.entries) });
     }
   }
   for (const s of SECTION_IDS) {
     if (!seenSections.has(s)) {
-      if (s === "numbers" || s === "compare" || s === "insights") blocks.push({ kind: "section", id: s, entries: [] });
+      if (s === "numbers" || s === "insights") blocks.push({ kind: "section", id: s, entries: [] });
       else blocks.push({ kind: "section", id: s });
     }
   }
@@ -397,7 +394,6 @@ export function reconcileLayout(layout: ReportLayout | undefined, metrics: strin
   // append never-seen entries to their home sections
   const wanted: EntryRef[] = [
     ...metrics.map((m) => ({ kind: "kpi" as const, id: m })),
-    ...(metrics.length >= 2 ? metrics.map((m) => ({ kind: "compare" as const, id: m })) : []),
     ...insightIds.map((id) => ({ kind: "insight" as const, id })),
   ];
   for (const e of wanted) {

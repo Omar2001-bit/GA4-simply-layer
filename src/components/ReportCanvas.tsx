@@ -14,17 +14,16 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { ArrowLeftIcon, CaretRightIcon, CheckIcon, FunnelIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, CaretRightIcon, CheckIcon, FunnelIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { buildInsights, HighlightPeriodsSection } from "./AnalyticsView";
+import { buildInsights } from "./AnalyticsView";
 import type { GraphViewMode } from "./ChartView";
 import DateControls from "./DateControls";
 import EntryCard from "./EntryCard";
 import FunnelView from "./FunnelView";
 import MetricCarousel from "./MetricCarousel";
-import NumbersView from "./NumbersView";
 import ReportEditor from "./ReportEditor";
 import SortableMetricCard from "./SortableMetricCard";
 import SortableSection from "./SortableSection";
@@ -193,8 +192,6 @@ export default function ReportCanvas({
   // the detail on, instead of scrolling past everything expanded by default.
   const [collapsed, setCollapsed] = useState<Partial<Record<SectionId, boolean>>>({
     numbers: true,
-    compare: true,
-    breakdown: true,
     insights: true,
     funnels: true,
   });
@@ -587,27 +584,6 @@ export default function ReportCanvas({
             )}
           </>
         );
-      case "breakdown":
-        return (
-          <>
-            <CollapsibleHeader
-              id="breakdown"
-              icon={<TableIcon size={13} />}
-              title="Day-by-day breakdown"
-              count={data?.rows.length ?? 0}
-              collapsed={!!collapsed.breakdown}
-              onToggle={toggleCollapsed}
-            />
-            {!collapsed.breakdown &&
-              (error ? (
-                <div className="flex h-24 items-center justify-center text-sm text-[#e66767]">{error}</div>
-              ) : data ? (
-                <NumbersView data={data} metricsMeta={metadata?.metrics} colorPeriods={config.colorPeriods} />
-              ) : (
-                <div className="h-24" />
-              ))}
-          </>
-        );
       case "insights":
         return (
           <>
@@ -662,44 +638,12 @@ export default function ReportCanvas({
               ))}
           </>
         );
-      case "highlights":
-        return data ? (
-          <HighlightPeriodsSection data={data} metricsMeta={metadata?.metrics} colorPeriods={config.colorPeriods} />
-        ) : (
-          <div className="h-24" />
-        );
-      case "compare":
-        return (
-          <>
-            <CollapsibleHeader
-              id="compare"
-              title="Compare metrics"
-              count={block.entries?.length ?? 0}
-              collapsed={!!collapsed.compare}
-              onToggle={toggleCollapsed}
-            />
-            {!collapsed.compare &&
-              (data ? (
-                (block.entries?.length ?? 0) === 0 ? (
-                  <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
-                    <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">
-                      Drag a card here from another section to compare it.
-                    </p>
-                  </DroppableZone>
-                ) : (
-                  renderEntries(data, block, "row", "grid grid-cols-1 gap-2 sm:grid-cols-2")
-                )
-              ) : (
-                <div className="h-24" />
-              ))}
-          </>
-        );
     }
   }
 
   const sectionBg = (block: LayoutBlock): string => {
     if (block.kind === "float") return "bg-[#020601]";
-    return block.id === "numbers" || block.id === "breakdown" ? "bg-[#020601]" : "bg-[#0e1c26]";
+    return block.id === "numbers" ? "bg-[#020601]" : "bg-[#0e1c26]";
   };
 
   const showGaps = draggable && activeDrag?.kind === "card";
