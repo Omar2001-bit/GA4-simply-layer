@@ -106,6 +106,82 @@ const EVENTS: Record<string, Knowledge> = {
       bad: `Fewer cart views alongside fewer purchases usually just tracks a general drop in engaged shoppers.`,
     },
   },
+  // ---- Tharaa's own cart-drawer custom events — a slide-out drawer with
+  // its own open/close, checkout, upsell, and remove controls, distinct from
+  // GA4's standard events of the same shape (view_cart, begin_checkout,
+  // remove_from_cart) which this store may also fire from other surfaces.
+  cart_drawer_open: {
+    what: `Fires when the slide-out cart drawer opens — either the shopper clicked the cart icon, or it auto-opened right after an add-to-cart.`,
+    trigger: `Clicking the cart icon, or an add-to-cart action that auto-opens the drawer.`,
+    up: {
+      good: `More drawer opens usually tracks with more cart activity overall — a healthy signal alongside rising add-to-cart.`,
+      bad: `A spike disconnected from add-to-cart growth can mean shoppers are repeatedly re-checking pricing out of hesitation rather than moving forward.`,
+    },
+    down: {
+      good: `Can be fine if shoppers are moving straight from add-to-cart into checkout without re-opening the drawer to double-check it.`,
+      bad: `Fewer drawer opens alongside fewer purchases usually just tracks a general drop in engaged shoppers.`,
+    },
+  },
+  cart_drawer_close: {
+    what: `Fires when the shopper closes the cart drawer without checking out — the close button, or clicking outside the open drawer.`,
+    trigger: `Clicking the drawer's close control, or clicking anywhere outside the open drawer.`,
+    up: {
+      good: `Normal browsing behavior — shoppers often peek at the cart, then close it to keep browsing before they're ready to buy.`,
+      bad: `Rarely a bad sign on its own — only worth a look if it's rising while checkout clicks are falling by more than a proportional amount.`,
+    },
+    down: {
+      good: `Can mean more shoppers are going straight from the drawer into checkout instead of closing it to keep browsing.`,
+      bad: `Rarely a bad sign on its own.`,
+    },
+  },
+  cart_checkout_click: {
+    what: `Fires when a shopper clicks the checkout button inside the cart drawer — before the checkout page itself has loaded.`,
+    trigger: `Clicking "Checkout" (or equivalent) inside the cart drawer.`,
+    up: {
+      good: `More checkout clicks means more shoppers are ready to buy — a strong bottom-of-funnel intent signal.`,
+      bad: `If this rises but checkout starts or purchases don't follow at the same rate, the click is firing but the checkout page itself may be failing to load, or loading too slowly.`,
+    },
+    down: {
+      good: `Only reassuring if it tracks a matching drop in cart adds — not a broken checkout button.`,
+      bad: `Fewer shoppers clicking checkout from the drawer, with steady cart adds, usually means the drawer itself is losing people — check for a missing, hidden, or hard-to-tap checkout button.`,
+    },
+  },
+  cart_upsell_click: {
+    what: `Fires when a shopper clicks a suggested or upsell product shown inside the cart drawer.`,
+    trigger: `Clicking an upsell/cross-sell product tile in the cart drawer.`,
+    up: {
+      good: `More upsell clicks means the suggested products are actually catching interest — a real shot at a bigger basket.`,
+      bad: `Rarely bad on its own — mainly worth checking these clicks are converting into actual adds, not just curiosity clicks that go nowhere.`,
+    },
+    down: {
+      good: `Rarely good on its own.`,
+      bad: `Fewer upsell clicks means less of this extra revenue opportunity is being taken — check whether the suggested products are still relevant to what's actually in the cart.`,
+    },
+  },
+  cart_item_remove: {
+    what: `Fires when a shopper removes an item from their cart using the drawer's own remove control.`,
+    trigger: `Clicking the remove/delete icon next to a line item inside the cart drawer.`,
+    up: {
+      good: `Occasionally healthy: shoppers actively curating a cart (swapping a size/color, clearing a duplicate) rather than abandoning it outright.`,
+      bad: `Usually means second thoughts right before checkout — sticker shock at the subtotal or a change of mind. A rise here is one of the strongest "something's wrong with pricing or trust" signals.`,
+    },
+    down: {
+      good: `Fewer removals means carts are sticking — whatever's added is staying wanted.`,
+      bad: `Very rarely a bad sign — a drop here is close to strictly good.`,
+    },
+  },
+  cart_empty_cta_click: {
+    what: `Fires when a shopper clicks the call-to-action shown when their cart is empty — usually a "Continue shopping" or "Browse products" prompt.`,
+    trigger: `Clicking the empty-cart CTA shown inside an empty cart drawer.`,
+    up: {
+      good: `More clicks means shoppers who land on an empty cart are being successfully redirected back into browsing instead of just leaving.`,
+      bad: `A sudden jump usually means more shoppers are hitting an empty cart in the first place — check whether add-to-cart is failing, carts are getting cleared, or this element is new/recently changed before reading it as demand.`,
+    },
+    down: {
+      good: `Can be fine if fewer shoppers are landing on an empty cart at all — a good sign elsewhere in the funnel.`,
+      bad: `Rarely a bad sign on its own.`,
+    },
+  },
   begin_checkout: {
     what: `Fires the moment a shopper starts the checkout process from their cart.`,
     trigger: `Clicking "Checkout" from the cart page or cart drawer.`,

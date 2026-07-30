@@ -13,8 +13,8 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { ArrowLeftIcon, CaretRightIcon, CheckIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { ArrowLeftIcon, CaretRightIcon, CheckIcon, FunnelIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -189,12 +189,14 @@ export default function ReportCanvas({
   if (isTimeSeriesDefault && (chartType === "pie" || chartType === "donut")) {
     setChartType("line");
   }
-  // Compare metrics and the day-by-day breakdown start folded — they're the
-  // densest blocks, and a client scanning the report opens them when they
-  // want the detail. Insights stay open: they're the headline takeaways.
+  // Every accordion section starts folded — a client opens what they want
+  // the detail on, instead of scrolling past everything expanded by default.
   const [collapsed, setCollapsed] = useState<Partial<Record<SectionId, boolean>>>({
+    numbers: true,
     compare: true,
     breakdown: true,
+    insights: true,
+    funnels: true,
   });
   const toggleCollapsed = (id: SectionId) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
   // "overlay": x-axis is the current period, previous drawn on top aligned.
@@ -409,8 +411,8 @@ export default function ReportCanvas({
       return;
     }
 
-    // dropped on another card → the two trade places (swap), regardless of
-    // whether they're in the same container or different ones
+    // dropped on another card → inserted at that position, shifting the rest
+    // along — a true reorder, not a swap, so no other card gets displaced
     if (overData?.type === "card") {
       const overEntry = overData.entry as EntryRef;
       const overContainer = overData.container as string;
@@ -418,9 +420,15 @@ export default function ReportCanvas({
       if (!destBlock?.entries) return;
       const destIndex = destBlock.entries.findIndex((e) => entryKey(e) === entryKey(overEntry));
       if (destIndex === -1) return;
-      if (destBlock === srcBlock && destIndex === srcIndex) return;
-      srcBlock.entries[srcIndex] = overEntry;
-      destBlock.entries[destIndex] = fromEntry;
+      if (destBlock === srcBlock) {
+        if (destIndex === srcIndex) return;
+        destBlock.entries = arrayMove(destBlock.entries, srcIndex, destIndex);
+      } else {
+        srcBlock.entries.splice(srcIndex, 1);
+        if (!destBlock.entries.some((e) => entryKey(e) === entryKey(fromEntry))) {
+          destBlock.entries.splice(destIndex, 0, fromEntry);
+        }
+      }
       finish();
     }
   }
@@ -631,21 +639,27 @@ export default function ReportCanvas({
       case "funnels":
         return (
           <>
-            <h2 className="mb-3 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">
-              Funnels
-            </h2>
-            {(config.funnels?.length ?? 0) === 0 ? (
-              <p className="text-xs text-[#7f959d]">
-                No funnels yet — define event steps in the editor and GA4&rsquo;s own funnel engine computes
-                who made it through each one.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                {config.funnels!.map((fn) => (
-                  <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} rangeB={config.rangeB} />
-                ))}
-              </div>
-            )}
+            <CollapsibleHeader
+              id="funnels"
+              icon={<FunnelIcon size={13} />}
+              title="Funnels"
+              count={config.funnels?.length ?? 0}
+              collapsed={!!collapsed.funnels}
+              onToggle={toggleCollapsed}
+            />
+            {!collapsed.funnels &&
+              ((config.funnels?.length ?? 0) === 0 ? (
+                <p className="text-xs text-[#7f959d]">
+                  No funnels yet — define event steps in the editor and GA4&rsquo;s own funnel engine computes
+                  who made it through each one.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                  {config.funnels!.map((fn) => (
+                    <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} rangeB={config.rangeB} />
+                  ))}
+                </div>
+              ))}
           </>
         );
       case "highlights":
