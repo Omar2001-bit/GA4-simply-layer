@@ -32,6 +32,12 @@ export async function POST(req: Request) {
   if (body.rangeB && (!DATE_RE.test(body.rangeB.startDate) || !DATE_RE.test(body.rangeB.endDate))) {
     return NextResponse.json({ error: "Invalid rangeB" }, { status: 400 });
   }
+  if (
+    body.rangeBAverageDivisor !== undefined &&
+    (!Number.isFinite(body.rangeBAverageDivisor) || body.rangeBAverageDivisor < 2 || body.rangeBAverageDivisor > 52)
+  ) {
+    return NextResponse.json({ error: "Invalid rangeBAverageDivisor" }, { status: 400 });
+  }
   if (body.filters) {
     if (!Array.isArray(body.filters) || body.filters.length > 10) {
       return NextResponse.json({ error: "Invalid filters" }, { status: 400 });

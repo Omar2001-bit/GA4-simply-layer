@@ -34,6 +34,7 @@ export type ComparePreset =
   | "previousPeriod"
   | "samePeriodLastYear"
   | "fixedEnd" // fixed end, same length as the current period — grows backward as it does
+  | "multiPeriodAvg" // N x current period's length immediately before it, totals averaged back down by N — see multiplier
   | "custom"
   | "none";
 
@@ -47,6 +48,21 @@ export interface CompareSel {
   preset: ComparePreset;
   start?: string;
   end?: string;
+  /** multiPeriodAvg only: how many current-period-lengths back the query
+   *  window spans (2, 3, 4…) — the fetched totals are divided back down by
+   *  this same number, so "Previous" reads as a multi-period average at the
+   *  current period's own scale, not an inflated multi-period sum. */
+  multiplier?: number;
+}
+
+/** A single metric's own date range, overriding the report's global
+ *  rangeA/rangeB — set from the per-graph date picker in MetricCarousel.
+ *  Persisted on the report (see ReportConfig.metricDateOverrides) so it
+ *  survives a reload and every card showing that metric (not just its
+ *  graph) can pick it up. */
+export interface MetricDateOverride {
+  rangeA: DateRangeSel;
+  rangeB: CompareSel;
 }
 
 export type FilterMatch = "contains" | "exact" | "begins" | "ends" | "regex";
@@ -216,6 +232,10 @@ export interface ReportConfig {
   filters?: FilterClause[]; // ANDed dimension filters
   colorPeriods?: ColorPeriod[]; // named date-range highlights, see §8.2
   funnels?: FunnelConfig[]; // GA4-native funnel definitions, rendered in the Funnels section
+  // per-metric date override (apiName -> its own rangeA/rangeB), set from the
+  // per-graph date picker — every card showing that metric (KPI tile,
+  // compare row), not just its graph, reads through this when present.
+  metricDateOverrides?: Record<string, MetricDateOverride>;
   limit: number;
   layout?: ReportLayout; // custom section/card arrangement; undefined = default order
   createdAt: string;
@@ -235,16 +255,17 @@ export interface PresetsFile {
 
 // ---- customizable report layout ----
 
-// "graph" is a single chart block and "highlights" is a period x metric
-// matrix table — neither has an atomic per-row unit to drag, so both stay
-// whole-section-only draggable. "numbers", "compare", and "insights" are all
-// entry containers: any card can move freely between any of the three.
-export const SECTION_IDS = ["graph", "numbers", "insights", "funnels", "highlights", "compare"] as const;
+// "graph", "breakdown", and "highlights" are single-block sections — neither
+// has an atomic per-row unit to drag, so all three stay whole-section-only
+// draggable. "numbers", "compare", and "insights" are all entry containers:
+// any card can move freely between any of the three.
+export const SECTION_IDS = ["graph", "numbers", "breakdown", "insights", "funnels", "highlights", "compare"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_TITLES: Record<SectionId, string> = {
   graph: "Graph view",
   numbers: "Numbers view",
+  breakdown: "Day-by-day breakdown",
   insights: "Insights",
   funnels: "Funnels",
   highlights: "Highlight periods",
@@ -417,6 +438,10 @@ export interface ReportRequest {
   rangeB?: ResolvedRange | null;
   filters?: FilterClause[];
   limit?: number;
+  /** Set when rangeB was resolved from a multiPeriodAvg compare — rangeB
+   *  itself already spans the full N x-length window; this tells the server
+   *  to divide the fetched previous-period totals back down by N. */
+  rangeBAverageDivisor?: number;
 }
 
 export interface ReportRow {

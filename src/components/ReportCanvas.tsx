@@ -14,7 +14,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { ArrowLeftIcon, CaretRightIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, CaretRightIcon, CheckIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -28,7 +28,8 @@ import NumbersView from "./NumbersView";
 import ReportEditor from "./ReportEditor";
 import SortableMetricCard from "./SortableMetricCard";
 import SortableSection from "./SortableSection";
-import { useReport } from "@/lib/useReport";
+import { detectGranularity } from "@/lib/dates";
+import { useMetricOverrides, useReport } from "@/lib/useReport";
 import {
   blockKey,
   CHART_TYPES,
@@ -41,6 +42,7 @@ import {
   type EntryRef,
   type LayoutBlock,
   type MetadataResponse,
+  type MetricDateOverride,
   type PropertySummary,
   type ReportConfig,
   type ReportLayout,
@@ -179,11 +181,20 @@ export default function ReportCanvas({
     setSyncedChartType(config.chartType);
     setChartType(config.chartType);
   }
-  // Insights and Compare metrics start folded — they're the densest blocks,
-  // and a client scanning the report opens them when they want the detail.
+  // Pie/donut can't represent a date-bucketed series (the data is a trend,
+  // not a one-time composition) — hidden from the picker below, and if a
+  // report was saved with one selected while its default breakdown is a
+  // time series, fall back to a line chart instead of rendering nonsense.
+  const isTimeSeriesDefault = detectGranularity(configDimensions(config)) !== null;
+  if (isTimeSeriesDefault && (chartType === "pie" || chartType === "donut")) {
+    setChartType("line");
+  }
+  // Compare metrics and the day-by-day breakdown start folded — they're the
+  // densest blocks, and a client scanning the report opens them when they
+  // want the detail. Insights stay open: they're the headline takeaways.
   const [collapsed, setCollapsed] = useState<Partial<Record<SectionId, boolean>>>({
-    insights: true,
     compare: true,
+    breakdown: true,
   });
   const toggleCollapsed = (id: SectionId) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
   // "overlay": x-axis is the current period, previous drawn on top aligned.
@@ -194,6 +205,16 @@ export default function ReportCanvas({
   const [metadata, setMetadata] = useState<MetadataResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // "Saved" flash next to the date controls — same timer pattern ReportEditor
+  // uses for its own Save button, kept separate since this one lives outside
+  // the editor panel and is visible even in plain view mode.
+  const [showDateSaved, setShowDateSaved] = useState(false);
+  useEffect(() => {
+    if (!savedAt) return;
+    setShowDateSaved(true);
+    const t = setTimeout(() => setShowDateSaved(false), 4000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
   const [graphIndex, setGraphIndex] = useState(0);
   // a click event fires on the card right after a drop lands on it — this
@@ -202,6 +223,10 @@ export default function ReportCanvas({
   // Numbers view still shows every selected metric side by side (unrelated to
   // how the graph section visualizes them), so it keeps the one full-config fetch.
   const { data, error, loading } = useReport(config);
+  // one small single-metric fetch per metricDateOverrides entry — lets a KPI
+  // tile/compare row for an overridden metric show ITS OWN dates' numbers
+  // instead of the report's global range, same as its graph already does
+  const overrideData = useMetricOverrides(config);
   const hasMetrics = config.metrics.length > 0;
   const insights = data ? buildInsights(data, metadata?.metrics, config.colorPeriods) : [];
   const insightsById = new Map(insights.map((i) => [i.id, i]));
@@ -246,6 +271,38 @@ export default function ReportCanvas({
   };
 
   const save = () => persist({ ...config, chartType });
+
+  // Per-graph date override (MetricCarousel) — kept in config so it saves
+  // via the same "Save dates" flow and every card for that metric, not just
+  // its graph, can read it (see useMetricOverrides below). Deletes the key
+  // entirely rather than storing undefined, matching how an object with no
+  // entry for a metric is read (?? falls through to the report's own dates).
+  const setMetricDateOverride = (metric: string, override: MetricDateOverride | undefined) => {
+    setConfig((c) => {
+      const next = { ...(c.metricDateOverrides ?? {}) };
+      if (override) next[metric] = override;
+      else delete next[metric];
+      return { ...c, metricDateOverrides: next };
+    });
+  };
+
+  // Date changes (report-level or per-graph override) autosave — same
+  // "viewing choice, not a report-definition edit" logic as layout drags
+  // below, so neither needs an explicit Save click. Debounced so typing a
+  // multiplier or clicking through the calendar doesn't fire a write per
+  // keystroke; skips the very first render so loading a report doesn't
+  // immediately re-save it right back.
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) {
+      skipFirstAutosave.current = false;
+      return;
+    }
+    if (config.metrics.length === 0) return;
+    const t = setTimeout(() => persist({ ...config, chartType }), 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(config.rangeA), JSON.stringify(config.rangeB), JSON.stringify(config.metricDateOverrides)]);
 
   // Layout changes (drag) persist immediately — rearranging is a viewing
   // preference, not a report-definition edit, so it shouldn't require
@@ -389,6 +446,7 @@ export default function ReportCanvas({
                 <EntryCard
                   entry={entry}
                   data={reportData}
+                  overrideData={overrideData}
                   metricsMeta={metadata?.metrics}
                   insightsById={insightsById}
                   shape={entry.kind === "insight" ? "row" : shape}
@@ -446,7 +504,12 @@ export default function ReportCanvas({
                   </div>
                 )}
                 <div className="flex w-max overflow-hidden rounded-lg border border-white/10">
-                  {CHART_TYPES.filter((c) => c.value !== "table" && c.value !== "scorecard").map((c) => (
+                  {CHART_TYPES.filter(
+                    (c) =>
+                      c.value !== "table" &&
+                      c.value !== "scorecard" &&
+                      !(isTimeSeriesDefault && (c.value === "pie" || c.value === "donut"))
+                  ).map((c) => (
                     <button
                       key={c.value}
                       type="button"
@@ -479,34 +542,62 @@ export default function ReportCanvas({
               metricsMeta={metadata?.metrics}
               activeIndex={graphIndex}
               onActiveIndexChange={setGraphIndex}
+              metricDateOverrides={config.metricDateOverrides}
+              onMetricDateOverrideChange={setMetricDateOverride}
+              saving={saving}
+              showDateSaved={showDateSaved}
             />
           </div>
         );
       case "numbers":
         return (
           <>
-            <h2 className="mb-3 pr-8 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7f959d]">
-              Numbers view
-            </h2>
-            {error ? (
-              <div className="flex h-24 items-center justify-center text-sm text-[#e66767]">{error}</div>
-            ) : data ? (
+            <CollapsibleHeader
+              id="numbers"
+              title="Numbers view"
+              count={block.entries?.length ?? 0}
+              collapsed={!!collapsed.numbers}
+              onToggle={toggleCollapsed}
+            />
+            {!collapsed.numbers && (
               <>
-                {(block.entries?.length ?? 0) === 0 ? (
-                  <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
-                    <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">Drag cards here.</p>
-                  </DroppableZone>
+                {error ? (
+                  <div className="flex h-24 items-center justify-center text-sm text-[#e66767]">{error}</div>
+                ) : data ? (
+                  (block.entries?.length ?? 0) === 0 ? (
+                    <DroppableZone id={ZONE_PREFIX + blockKey(block)}>
+                      <p className="rounded-xl px-1 py-3 text-xs text-[#7f959d]">Drag cards here.</p>
+                    </DroppableZone>
+                  ) : (
+                    renderEntries(data, block, "tile", "grid grid-cols-2 md:grid-cols-4 gap-3")
+                  )
                 ) : (
-                  renderEntries(data, block, "tile", "grid grid-cols-2 md:grid-cols-4 gap-3")
+                  <div className="h-24" />
                 )}
-                <div className="mt-4">
-                  <NumbersView data={data} metricsMeta={metadata?.metrics} colorPeriods={config.colorPeriods} />
-                </div>
+                {loading && data && <p className="mt-2 text-center text-xs text-[#7f959d]">Refreshing…</p>}
               </>
-            ) : (
-              <div className="h-24" />
             )}
-            {loading && data && <p className="mt-2 text-center text-xs text-[#7f959d]">Refreshing…</p>}
+          </>
+        );
+      case "breakdown":
+        return (
+          <>
+            <CollapsibleHeader
+              id="breakdown"
+              icon={<TableIcon size={13} />}
+              title="Day-by-day breakdown"
+              count={data?.rows.length ?? 0}
+              collapsed={!!collapsed.breakdown}
+              onToggle={toggleCollapsed}
+            />
+            {!collapsed.breakdown &&
+              (error ? (
+                <div className="flex h-24 items-center justify-center text-sm text-[#e66767]">{error}</div>
+              ) : data ? (
+                <NumbersView data={data} metricsMeta={metadata?.metrics} colorPeriods={config.colorPeriods} />
+              ) : (
+                <div className="h-24" />
+              ))}
           </>
         );
       case "insights":
@@ -594,7 +685,7 @@ export default function ReportCanvas({
 
   const sectionBg = (block: LayoutBlock): string => {
     if (block.kind === "float") return "bg-[#020601]";
-    return block.id === "numbers" ? "bg-[#020601]" : "bg-[#0e1c26]";
+    return block.id === "numbers" || block.id === "breakdown" ? "bg-[#020601]" : "bg-[#0e1c26]";
   };
 
   const showGaps = draggable && activeDrag?.kind === "card";
@@ -634,13 +725,33 @@ export default function ReportCanvas({
         )}
       </div>
 
-      {/* date controls always live, even in view mode */}
-      <div className="rounded-2xl border border-white/10 bg-[#0e1c26] px-4 py-3">
-        <DateControls
-          rangeA={config.rangeA}
-          rangeB={config.rangeB}
-          onChange={(rangeA, rangeB) => setConfig((c) => ({ ...c, rangeA, rangeB }))}
-        />
+      {/* date controls always live, even in view mode — relative+z-30 gives
+          its own stacking context so the calendar popover always renders
+          above the graph/chart section below it, regardless of DOM order */}
+      <div className="relative z-30 rounded-2xl border border-white/10 bg-[#0e1c26] px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <DateControls
+            rangeA={config.rangeA}
+            rangeB={config.rangeB}
+            onChange={(rangeA, rangeB) => setConfig((c) => ({ ...c, rangeA, rangeB }))}
+          />
+          {/* passive — date changes autosave (report-level and per-graph
+              override alike), even in client-share (lockView) mode, so a
+              client's date choice becomes the new default for anyone
+              opening this same report link without any explicit save step */}
+          <div className="flex shrink-0 items-center gap-1.5 text-xs" style={{ minHeight: "1.25rem" }}>
+            {saving ? (
+              <span className="text-[#7f959d]">Saving…</span>
+            ) : (
+              showDateSaved && (
+                <span className="animate-pop-in flex items-center gap-1 font-medium text-[#6ae499]">
+                  <CheckIcon size={13} weight="bold" />
+                  Saved
+                </span>
+              )
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-row">
@@ -711,6 +822,7 @@ export default function ReportCanvas({
                     <EntryCard
                       entry={activeDrag.entry}
                       data={data}
+                      overrideData={overrideData}
                       metricsMeta={metadata?.metrics}
                       insightsById={insightsById}
                       shape={activeDrag.entry.kind === "kpi" ? "tile" : "row"}

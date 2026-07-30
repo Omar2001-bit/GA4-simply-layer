@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { metricLabel } from "./ChartView";
-import { deltaPct, fmtCompact, fmtDelta } from "@/lib/format";
-import { DELTA_DOWN, DELTA_UP, INK_MUTED, SERIES_A } from "@/lib/theme";
+import { Delta } from "./DeltaBadge";
+import { deltaPct, fmtCompact } from "@/lib/format";
+import { INK_MUTED, SERIES_A } from "@/lib/theme";
 import { useReport } from "@/lib/useReport";
-import type { ReportConfig } from "@/lib/types";
+import { metricIsInverted, type ReportConfig } from "@/lib/types";
 
 interface Props {
   report: ReportConfig;
@@ -53,12 +54,7 @@ export default function ReportPreviewCard({ report }: Props) {
               {loading && !data ? "…" : fmtCompact(current, type, data?.currencyCode)}
             </span>
             {delta !== null && (
-              <span
-                className="text-xs font-medium tabular-nums"
-                style={{ color: delta < 0 ? DELTA_DOWN : DELTA_UP }}
-              >
-                {fmtDelta(delta)}
-              </span>
+              <Delta value={delta} invert={metricIsInverted(metric)} apiName={metric} prevValue={previous} />
             )}
           </div>
           <p className="text-[11px] text-[#7f959d]">{metricLabel(metric)}</p>

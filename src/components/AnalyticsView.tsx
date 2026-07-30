@@ -2,8 +2,9 @@
 
 import { TrophyIcon } from "@phosphor-icons/react";
 import { metricLabel } from "./ChartView";
+import { Delta } from "./DeltaBadge";
 import { bucketOverlapsRange, detectGranularity } from "@/lib/dates";
-import { deltaPct, fmtDelta, fmtValue } from "@/lib/format";
+import { deltaPct, fmtValue } from "@/lib/format";
 import { analyzeReport, type EngineInsight } from "@/lib/insightEngine";
 import { DELTA_DOWN, DELTA_UP, INK_MUTED } from "@/lib/theme";
 import { metricIsInverted, type ColorPeriod, type MetaItem, type ReportResponse } from "@/lib/types";
@@ -101,7 +102,7 @@ export function InsightBubble({ insight }: { insight: EngineInsight }) {
 export function HighlightPeriodsSection({ data, metricsMeta, colorPeriods }: Props) {
   const granularity = detectGranularity(data.dimensions?.length ? data.dimensions : data.dimension ? [data.dimension] : []);
   const periodRows =
-    colorPeriods && colorPeriods.length > 0 && granularity
+    colorPeriods && colorPeriods.length >= 2 && granularity
       ? colorPeriods.map((p) => ({
           period: p,
           totals: data.metrics.map((_, i) => periodTotal(data, p, granularity, i)),
@@ -190,17 +191,12 @@ export function CompareMetricRow({ apiName, data, metricsMeta }: CompareRowProps
   const b = data.totalsB?.[i];
   const d = deltaPct(a, b);
   const type = data.metricHeaders[i]?.type;
-  const good = d !== null && (metricIsInverted(apiName) ? d < 0 : d > 0);
   return (
     <div className="flex items-center justify-between rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-xs">
       <span className="truncate text-[#c2d1d5]">{metricLabel(apiName, metricsMeta)}</span>
       <span className="flex shrink-0 items-center gap-2 tabular-nums">
         <span className="font-semibold text-white">{fmtValue(a, type, data.currencyCode)}</span>
-        {d !== null && (
-          <span style={{ color: good || d === 0 ? DELTA_UP : DELTA_DOWN }} className="font-medium">
-            {fmtDelta(d)}
-          </span>
-        )}
+        {d !== null && <Delta value={d} invert={metricIsInverted(apiName)} apiName={apiName} prevValue={b} />}
       </span>
     </div>
   );

@@ -166,6 +166,52 @@ function ruleConversionDecomposition(c: Ctx) {
   });
 }
 
+/** The contradiction a client spots first: an early-funnel event rising while
+ *  purchases or revenue fall. The full explanation usually already exists via
+ *  ruleFunnelSteps' bottleneck or ruleConversionDecomposition below, but
+ *  those are framed around the funnel/traffic — a client scanning headlines
+ *  needs the "up here, down there" tension named directly, not inferred from
+ *  two separate numbers in two separate cards. Scored above every other rule
+ *  so it leads the Insights panel whenever it fires. */
+function ruleTopFunnelPurchaseContradiction(c: Ctx) {
+  if (!c.hasCompare) return;
+  const addA = c.cur("event:add_to_cart");
+  const addB = c.prev("event:add_to_cart");
+  if (addA === null || !addB || addB < MIN_PREV_BASE) return;
+  const addDelta = ((addA - addB) / addB) * 100;
+  if (addDelta < 10) return; // only worth calling out when the rise is real
+
+  const purA = c.cur("event:purchase");
+  const purB = c.prev("event:purchase");
+  const revA = c.cur("purchaseRevenue");
+  const revB = c.prev("purchaseRevenue");
+  const purDelta = purA !== null && purB && purB >= MIN_PREV_BASE ? ((purA - purB) / purB) * 100 : null;
+  const revDelta = revA !== null && revB && revB > 0 ? ((revA - revB) / revB) * 100 : null;
+  if (!(purDelta !== null && purDelta < -5) && !(revDelta !== null && revDelta < -5)) return;
+
+  const rate = addA > 0 && purA !== null ? purA / addA : null;
+  const lost = purA !== null ? addA - purA : null;
+  const salesParts = [
+    purDelta !== null ? `purchases are ${pctText(purDelta)}` : null,
+    revDelta !== null ? `revenue is ${pctText(revDelta)}` : null,
+  ].filter((s): s is string => s !== null);
+
+  c.out.push({
+    id: "contradiction:atc-vs-purchase",
+    severity: "critical",
+    category: "conversion",
+    title: `Add-to-cart is up ${pctText(addDelta)}, but that isn't turning into sales`,
+    text:
+      `${salesParts.join(" and ")} over the same period` +
+      (rate !== null && lost !== null && purA !== null
+        ? ` — of ${fmtValue(addA, "TYPE_INTEGER")} add-to-carts this period, only ${fmtValue(purA, "TYPE_INTEGER")} (${pp(rate)}) became a purchase, ${fmtValue(lost, "TYPE_INTEGER")} lost somewhere between the cart and checkout.`
+        : `.`),
+    recommendation:
+      "More people adding to cart is a real top-of-funnel win — the leak is later in the funnel. See the funnel breakdown below for exactly which step is losing them.",
+    score: 120,
+  });
+}
+
 /** Revenue = order count x average order value — and whether AOV cushioned
  *  or amplified the move (observed: -61% orders softened to -52% revenue
  *  by +20% AOV). */
@@ -631,8 +677,28 @@ function ruleMixShift(c: Ctx) {
   }
 }
 
+type MoverKind = "count" | "convu" | "convs" | "other";
+
+/** Which underlying fact a metric variant restates — event:X, convu:X, and
+ *  convs:X are three views of the SAME move (raw count, per-visitor share,
+ *  per-visit share), not three separate movements. */
+function moverSubject(m: string): string {
+  if (isEventMetric(m)) return `event:${eventMetricName(m)}`;
+  if (isConvRateMetric(m)) return `event:${convRateEventName(m)}`;
+  return m;
+}
+
+function moverKind(m: string): MoverKind {
+  if (isEventMetric(m)) return "count";
+  if (isConvRateMetric(m)) return convRateDenom(m) === "totalUsers" ? "convu" : "convs";
+  return "other";
+}
+
 /** Generic top movers — the floor so every report gets something, with the
- *  tiny-base guard and client-friendly metric names. */
+ *  tiny-base guard and client-friendly metric names. Variants of the same
+ *  event (raw count, per-visitor rate, per-visit rate) are consolidated into
+ *  one card instead of one per variant, so a report with all three selected
+ *  doesn't restate the same fact three ways. */
 function ruleTopMovers(c: Ctx) {
   if (!c.hasCompare) return;
   const { data } = c;
@@ -646,8 +712,33 @@ function ruleTopMovers(c: Ctx) {
     if ((isEventMetric(m) || m === "sessions" || m === "totalUsers" || m === "newUsers") && (b ?? 0) < MIN_PREV_BASE) return;
     movers.push({ m, d, i });
   });
-  movers.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
-  for (const { m, d, i } of movers.slice(0, 6)) {
+
+  const groups = new Map<string, typeof movers>();
+  for (const mv of movers) {
+    const subj = moverSubject(mv.m);
+    if (!groups.has(subj)) groups.set(subj, []);
+    groups.get(subj)!.push(mv);
+  }
+
+  const consolidated: { m: string; d: number; i: number; extra: string }[] = [];
+  for (const group of groups.values()) {
+    // raw count leads (the concrete, client-readable number); rates fold in as a footnote
+    group.sort((a, b) => {
+      const ka = moverKind(a.m);
+      const kb = moverKind(b.m);
+      if (ka === "count" && kb !== "count") return -1;
+      if (kb === "count" && ka !== "count") return 1;
+      return Math.abs(b.d) - Math.abs(a.d);
+    });
+    const [primary, ...rest] = group;
+    const rateParts = rest
+      .filter((r) => moverKind(r.m) === "convu" || moverKind(r.m) === "convs")
+      .map((r) => `${moverKind(r.m) === "convu" ? "per visitor" : "per visit"} ${pctText(r.d)}`);
+    consolidated.push({ ...primary, extra: rateParts.length ? ` The rate moved too (${rateParts.join(", ")}).` : "" });
+  }
+  consolidated.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
+
+  for (const { m, d, i, extra } of consolidated.slice(0, 6)) {
     const type = data.metricHeaders[i]?.type;
     // for bad-when-up metrics (cart removals, refunds…) an increase is the warning
     const good = metricIsInverted(m) ? d < 0 : d > 0;
@@ -656,7 +747,7 @@ function ruleTopMovers(c: Ctx) {
       severity: Math.abs(d) > 25 ? (good ? "good" : "warning") : "info",
       category: "trend",
       title: `${plainLabel(m, c.meta)}: ${pctText(d)}`,
-      text: `${fmtValue(data.totalsA[i] ?? 0, type, data.currencyCode)} this period vs ${fmtValue(data.totalsB?.[i] ?? 0, type, data.currencyCode)} last period.`,
+      text: `${fmtValue(data.totalsA[i] ?? 0, type, data.currencyCode)} this period vs ${fmtValue(data.totalsB?.[i] ?? 0, type, data.currencyCode)} last period.${extra}`,
       score: 30 + Math.min(Math.abs(d) / 5, 15),
     });
   }
@@ -685,6 +776,7 @@ export function analyzeReport(data: ReportResponse, meta?: MetaItem[]): EngineIn
     hasCompare: !!data.rangeB && !!data.totalsB,
   };
 
+  ruleTopFunnelPurchaseContradiction(ctx);
   ruleConversionDecomposition(ctx);
   ruleRevenueDecomposition(ctx);
   ruleFunnelSteps(ctx);
@@ -700,9 +792,11 @@ export function analyzeReport(data: ReportResponse, meta?: MetaItem[]): EngineIn
   // decompositions already state the number with more context
   const hasDecompP = ctx.out.some((o) => o.id === "decomp:purchases");
   const hasDecompR = ctx.out.some((o) => o.id === "decomp:revenue");
+  const hasContradiction = ctx.out.some((o) => o.id === "contradiction:atc-vs-purchase");
   const filtered = ctx.out.filter((o) => {
     if (hasDecompP && (o.id === "delta:event:purchase" || o.id === "delta:sessions")) return false;
     if (hasDecompR && (o.id === "delta:purchaseRevenue" || o.id === "delta:averagePurchaseRevenue")) return false;
+    if (hasContradiction && o.id === "delta:event:add_to_cart") return false;
     return true;
   });
 

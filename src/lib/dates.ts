@@ -255,8 +255,40 @@ export function resolveCompare(sel: CompareSel, rangeA: ResolvedRange): Resolved
     const endD = new Date(endDate + "T00:00:00");
     return { startDate: fmt(addDays(endD, -(days - 1))), endDate };
   }
+  if (sel.preset === "multiPeriodAvg") {
+    // N x A's own length, immediately before A — the caller divides the
+    // fetched totals back down by N (see rangeBAverageDivisor in ga4.ts) so
+    // "Previous" reads as an N-period average at A's own scale.
+    const multiplier = Math.max(2, Math.round(sel.multiplier ?? 2));
+    return { startDate: fmt(addDays(start, -days * multiplier)), endDate: fmt(addDays(start, -1)) };
+  }
   // previousPeriod: same length, immediately before A
   return { startDate: fmt(addDays(start, -days)), endDate: fmt(addDays(start, -1)) };
+}
+
+function daySpan(start: string, end: string): number {
+  return Math.round((new Date(end + "T00:00:00").getTime() - new Date(start + "T00:00:00").getTime()) / 86400000) + 1;
+}
+
+/** The real N period-length chunks a multiPeriodAvg rangeB spans, most
+ *  recent first — e.g. a 23-day rangeA with N=3 turns "Apr 29 → Jul 6" (one
+ *  deceptively-long-looking span) into ["Jun 14 → Jul 6", "May 22 → Jun 13",
+ *  "Apr 29 → May 21"], which is what's actually being averaged together.
+ *  Falls back to a single start→end entry when B isn't an exact multiple of
+ *  A's length (every other compare preset). */
+export function multiPeriodChunks(rangeA: ResolvedRange, rangeB: ResolvedRange): ResolvedRange[] {
+  const dA = daySpan(rangeA.startDate, rangeA.endDate);
+  const dB = daySpan(rangeB.startDate, rangeB.endDate);
+  if (dA <= 0 || dB <= dA || dB % dA !== 0) return [{ startDate: rangeB.startDate, endDate: rangeB.endDate }];
+  const n = dB / dA;
+  const chunks: ResolvedRange[] = [];
+  let end = new Date(rangeB.endDate + "T00:00:00");
+  for (let k = 0; k < n; k++) {
+    const start = addDays(end, -(dA - 1));
+    chunks.push({ startDate: fmt(start), endDate: fmt(end) });
+    end = addDays(start, -1);
+  }
+  return chunks;
 }
 
 export const RANGE_PRESETS: { value: string; label: string }[] = [
@@ -275,6 +307,7 @@ export const COMPARE_PRESETS: { value: string; label: string }[] = [
   { value: "previousPeriod", label: "Previous period" },
   { value: "samePeriodLastYear", label: "Same period last year" },
   { value: "fixedEnd", label: "Fixed baseline (grows to match)" },
+  { value: "multiPeriodAvg", label: "Average of N previous periods" },
   { value: "custom", label: "Custom" },
   { value: "none", label: "No comparison" },
 ];

@@ -19,8 +19,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { bucketDayCount, bucketOverlapsRange, bucketSpan, detectGranularity, type TimeGranularity } from "@/lib/dates";
-import { fmtBucketLabel, fmtCompact, fmtDelta, fmtValue, deltaPct, humanize, humanizeEvent } from "@/lib/format";
+import { Delta } from "./DeltaBadge";
+import { bucketDayCount, bucketOverlapsRange, bucketSpan, detectGranularity, multiPeriodChunks, type TimeGranularity } from "@/lib/dates";
+import { fmtBucketLabel, fmtCompact, fmtDateLabel, fmtDelta, fmtValue, deltaPct, humanize, humanizeEvent } from "@/lib/format";
 import {
   BASELINE,
   CATEGORICAL,
@@ -178,6 +179,12 @@ const tooltipStyle = {
 /** The period language: Current = solid dot, Previous = dashed ring. Same hue family, never new colors. */
 export function PeriodChips({ data, compact }: { data: ReportResponse; compact?: boolean }) {
   if (!data.rangeB || compact) return null;
+  // "Apr 29 → Jul 6" alone reads as one continuous comparison span — when
+  // rangeB is actually N stacked copies of rangeA's own length (multiPeriodAvg),
+  // show the real chunk count and list them on hover instead of implying a
+  // single long block was compared as-is.
+  const chunks = multiPeriodChunks(data.rangeA, data.rangeB);
+  const isMultiPeriod = chunks.length > 1;
   return (
     <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs">
       <span
@@ -191,6 +198,7 @@ export function PeriodChips({ data, compact }: { data: ReportResponse; compact?:
       <span
         className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
         style={{ color: INK_MUTED, border: `1px dashed ${SERIES_B}` }}
+        title={isMultiPeriod ? `Averaged from ${chunks.length} periods, most recent first: ${chunks.map((c) => `${fmtDateLabel(c.startDate)}–${fmtDateLabel(c.endDate)}`).join(", ")}` : undefined}
       >
         <span
           className="inline-block h-2 w-2 rounded-full"
@@ -199,7 +207,7 @@ export function PeriodChips({ data, compact }: { data: ReportResponse; compact?:
         <span className="font-semibold" style={{ color: INK_SECONDARY }}>
           Previous
         </span>
-        {data.rangeB.startDate} → {data.rangeB.endDate}
+        {isMultiPeriod ? `${chunks.length}× periods, avg` : `${data.rangeB.startDate} → ${data.rangeB.endDate}`}
       </span>
     </div>
   );
@@ -346,8 +354,11 @@ function TotalsOnlyView({
         {fmtValue(a, type, data.currencyCode)}
       </div>
       {delta !== null && (
-        <div style={{ color: (invert ? delta < 0 : delta > 0) || delta === 0 ? DELTA_UP : DELTA_DOWN }} className="text-xs font-medium">
-          {fmtDelta(delta)} vs previous
+        <div className="flex items-center gap-1.5 text-xs font-medium">
+          <Delta value={delta} invert={invert} apiName={data.metrics[metricIndex] ?? ""} prevValue={b} />
+          <span style={{ color: INK_MUTED }} className="font-normal">
+            vs previous
+          </span>
         </div>
       )}
       <p className="flex max-w-xs items-center gap-1.5 text-xs leading-snug" style={{ color: INK_MUTED }}>
@@ -411,11 +422,11 @@ export default function ChartView({
           {fmtValue(a, metricType, data.currencyCode)}
         </div>
         {delta !== null && (
-          <div
-            style={{ color: (inverted ? delta < 0 : delta > 0) || delta === 0 ? DELTA_UP : DELTA_DOWN }}
-            className="text-sm font-medium"
-          >
-            {fmtDelta(delta)} vs previous ({fmtValue(b ?? 0, metricType, data.currencyCode)})
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <Delta value={delta} invert={inverted} apiName={metricName} prevValue={b} />
+            <span style={{ color: INK_MUTED }} className="font-normal">
+              vs previous ({fmtValue(b ?? 0, metricType, data.currencyCode)})
+            </span>
           </div>
         )}
         {chips}

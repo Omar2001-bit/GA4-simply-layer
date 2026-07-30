@@ -1,13 +1,15 @@
 "use client";
 
-import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
+import { CalendarBlankIcon, CaretLeftIcon, CaretRightIcon, CheckIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import ChartView, { metricLabel, type GraphViewMode } from "./ChartView";
+import DateControls from "./DateControls";
+import { Delta } from "./DeltaBadge";
 import MetaPicker from "./MetaPicker";
 import MetricJumpMenu from "./MetricJumpMenu";
 import { detectGranularity, granularityDims, type TimeGranularity } from "@/lib/dates";
-import { deltaPct, fmtDelta, fmtValue } from "@/lib/format";
-import { DELTA_DOWN, DELTA_UP, INK_MUTED } from "@/lib/theme";
+import { deltaPct, fmtValue } from "@/lib/format";
+import { INK_MUTED } from "@/lib/theme";
 import { useReport } from "@/lib/useReport";
 import {
   metricIsInverted,
@@ -18,6 +20,7 @@ import {
   type FilterClause,
   type MetaItem,
   type MetadataResponse,
+  type MetricDateOverride,
   type ReportConfig,
 } from "@/lib/types";
 
@@ -38,6 +41,16 @@ interface Props {
   // clicking a KPI card elsewhere on the page can jump the graph here)
   activeIndex?: number;
   onActiveIndexChange?: (i: number) => void;
+  // persisted on the report (config.metricDateOverrides) — lifted up so
+  // "Save dates" can write it to Firestore and every card showing an
+  // overridden metric, not just its graph, can read the same source of truth
+  metricDateOverrides?: Record<string, MetricDateOverride>;
+  onMetricDateOverrideChange: (metric: string, override: MetricDateOverride | undefined) => void;
+  // passive autosave status — same debounced persist() the report-level date
+  // controls trigger, shown here too since a change made in this panel is
+  // covered by it without any separate action
+  saving: boolean;
+  showDateSaved: boolean;
 }
 
 const TIME_VIEWS: { value: TimeGranularity; label: string }[] = [
@@ -59,6 +72,10 @@ interface SlideProps {
   viewMode?: GraphViewMode;
   dims: string[];
   onDimsChange: (dims: string[]) => void;
+  dateOverride?: MetricDateOverride;
+  onDateOverrideChange: (o: MetricDateOverride | undefined) => void;
+  saving: boolean;
+  showDateSaved: boolean;
   colorPeriods?: ColorPeriod[];
   metadata: MetadataResponse | null;
   metricsMeta?: MetaItem[];
@@ -77,10 +94,19 @@ function MetricSlide({
   viewMode,
   dims,
   onDimsChange,
+  dateOverride,
+  onDateOverrideChange,
+  saving,
+  showDateSaved,
   colorPeriods,
   metadata,
   metricsMeta,
 }: SlideProps) {
+  // this slide's own dates, when set, take over from the report's global
+  // DateControls above the graph — same "per-slide override, falls back to
+  // the report default" pattern as `dims` just below.
+  const effectiveRangeA = dateOverride?.rangeA ?? rangeA;
+  const effectiveRangeB = dateOverride?.rangeB ?? rangeB;
   const config: ReportConfig = useMemo(
     () => ({
       id: "",
@@ -90,18 +116,17 @@ function MetricSlide({
       dimensions: dims,
       metrics: [metric],
       chartType,
-      rangeA,
-      rangeB,
+      rangeA: effectiveRangeA,
+      rangeB: effectiveRangeB,
       filters,
       limit,
       createdAt: "",
       updatedAt: "",
     }),
-    [property, dims, metric, chartType, rangeA, rangeB, filters, limit]
+    [property, dims, metric, chartType, effectiveRangeA, effectiveRangeB, filters, limit]
   );
   const { data, error, loading } = useReport(config);
   const headlineDelta = data?.totalsB ? deltaPct(data.totalsA[0] ?? 0, data.totalsB[0]) : null;
-  const headlineGood = headlineDelta !== null && (metricIsInverted(metric) ? headlineDelta < 0 : headlineDelta > 0);
   const type = data?.metricHeaders[0]?.type;
   // "Day/Week/Month" is really just three quick presets for `dims` — deriving
   // the active one from `dims` (instead of separate state) means picking a
@@ -131,9 +156,12 @@ function MetricSlide({
                       vs {fmtValue(data.totalsB[0] ?? 0, type, data.currencyCode)}
                     </span>
                     {headlineDelta !== null && (
-                      <span style={{ color: headlineGood || headlineDelta === 0 ? DELTA_UP : DELTA_DOWN }} className="font-semibold">
-                        {fmtDelta(headlineDelta)}
-                      </span>
+                      <Delta
+                        value={headlineDelta}
+                        invert={metricIsInverted(metric)}
+                        apiName={metric}
+                        prevValue={data.totalsB[0]}
+                      />
                     )}
                   </>
                 )}
@@ -168,8 +196,53 @@ function MetricSlide({
                 allowNone
               />
             </div>
+            <button
+              type="button"
+              onClick={() => onDateOverrideChange(dateOverride ? undefined : { rangeA, rangeB })}
+              aria-pressed={!!dateOverride}
+              title={dateOverride ? "Using custom dates for this metric — click to go back to the report's dates" : "Set a different date range just for this metric"}
+              className={`focus-ring flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors duration-150 ${
+                dateOverride
+                  ? "border-[#6ae499]/50 bg-[#6ae499]/10 text-[#6ae499]"
+                  : "border-white/10 text-[#7f959d] hover:border-white/25 hover:text-[#c2d1d5]"
+              }`}
+            >
+              <CalendarBlankIcon size={13} />
+              {dateOverride ? "Custom dates" : "Report dates"}
+            </button>
           </div>
         </div>
+        {dateOverride && (
+          <div className="animate-rise-in relative z-30 mb-3 rounded-lg border border-dashed border-[#6ae499]/30 bg-[#081219] p-2.5">
+            <DateControls
+              compact
+              rangeA={dateOverride.rangeA}
+              rangeB={dateOverride.rangeB}
+              onChange={(a, b) => onDateOverrideChange({ rangeA: a, rangeB: b })}
+            />
+            {/* passive — autosaves via the same debounced effect that
+                covers the report-level date controls */}
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              {saving ? (
+                <span className="text-[#7f959d]">Saving…</span>
+              ) : (
+                showDateSaved && (
+                  <span className="animate-pop-in flex items-center gap-1 font-medium text-[#6ae499]">
+                    <CheckIcon size={12} weight="bold" />
+                    Saved
+                  </span>
+                )
+              )}
+              <button
+                type="button"
+                onClick={() => onDateOverrideChange(undefined)}
+                className="focus-ring text-[#7f959d] underline decoration-dotted transition-colors duration-150 hover:text-[#c2d1d5]"
+              >
+                Reset to the report&rsquo;s dates
+              </button>
+            </div>
+          </div>
+        )}
         <div className="relative">
           {loading && (
             <div className="animate-fade-in absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#081219]/70 text-xs" style={{ color: INK_MUTED }}>
@@ -220,6 +293,10 @@ export default function MetricCarousel({
   metricsMeta,
   activeIndex,
   onActiveIndexChange,
+  metricDateOverrides,
+  onMetricDateOverrideChange,
+  saving,
+  showDateSaved,
 }: Props) {
   const [slideDims, setSlideDims] = useState<Record<string, string[]>>({});
   const [internalActive, setInternalActive] = useState(0);
@@ -275,6 +352,10 @@ export default function MetricCarousel({
         viewMode={viewMode}
         dims={slideDims[metric] ?? defaultDims}
         onDimsChange={(d) => setSlideDims((prev) => ({ ...prev, [metric]: d }))}
+        dateOverride={metricDateOverrides?.[metric]}
+        onDateOverrideChange={(o) => onMetricDateOverrideChange(metric, o)}
+        saving={saving}
+        showDateSaved={showDateSaved}
         colorPeriods={colorPeriods}
         metadata={metadata}
         metricsMeta={metricsMeta}

@@ -688,6 +688,64 @@ function mergeReports(
   };
 }
 
+/** Turns a multiPeriodAvg previous-period response into something actually
+ *  comparable to Current, day by day. rangeB was resolved (see
+ *  resolveCompare in dates.ts) as N contiguous copies of rangeA's own
+ *  length, oldest chunk first, ending right where Current begins — so chunk
+ *  N-1 is "the period immediately before Current" (ordinary previousPeriod),
+ *  chunk N-2 is the one before that, and so on.
+ *
+ *  Naively pairing Current's day i with the i-th day of that whole N x D-day
+ *  window pairs Current's day 1 against the OLDEST chunk's day 1 — e.g. N=4
+ *  compares this week against a week from ~3 periods ago, reading as "why is
+ *  this comparing to May". What's actually wanted: Current's day i vs the
+ *  AVERAGE of day i across all N chunks (each chunk's own day i, same
+ *  relative offset from its own period start) — that's the real N-period
+ *  average, day-aligned, and it's what totalsB already equals in aggregate
+ *  (sum of these N-period-averaged days over the whole window == the grand
+ *  total / N, so this stays consistent with the totals-only consumers).
+ *
+ *  Conversion-rate columns are skipped — already a ratio over the same N x
+ *  window on both sides, so N cancels out on its own without touching them.
+ *  Categorical (non-date) breakdowns have no day-offset concept, so each
+ *  row's raw sum is just divided by N as before. */
+function averagePreviousPeriod(resp: ReportResponse, divisor: number): ReportResponse {
+  if (!(divisor > 1) || !resp.totalsB) return resp;
+  const isRate = resp.metrics.map(isConvRateMetric);
+  const divideArr = (arr: number[]) => arr.map((v, i) => (isRate[i] ? v : v / divisor));
+  const totalsB = divideArr(resp.totalsB);
+
+  const granularity = detectGranularity(resp.dimensions);
+  if (!granularity) {
+    return { ...resp, totalsB, rows: resp.rows.map((r) => (r.b ? { ...r, b: divideArr(r.b) } : r)) };
+  }
+
+  const currRows = resp.rows.filter((r) => r.dim);
+  const d = currRows.length;
+  if (d === 0) return { ...resp, totalsB };
+  // the whole N x D-day previous window, one entry per real day, chronological
+  // (oldest first) — every row carries bDim/b in this mode, even the ones
+  // with no matching current-side day (dim === "")
+  const prevDaily = resp.rows.filter((r) => r.bDim !== undefined).map((r) => r.b);
+  const n = Math.max(1, Math.round(prevDaily.length / d));
+  const nMetrics = resp.metrics.length;
+
+  const rows: ReportRow[] = currRows.map((r, i) => {
+    const sum = new Array<number>(nMetrics).fill(0);
+    let seen = 0;
+    for (let k = 0; k < n; k++) {
+      const day = prevDaily[k * d + i];
+      if (!day) continue;
+      seen++;
+      day.forEach((v, mi) => (sum[mi] += v));
+    }
+    // no real single date behind this average — b only, bDim intentionally omitted
+    return { dim: r.dim, a: r.a, b: seen > 0 ? sum.map((v) => v / seen) : undefined };
+  });
+
+  return { ...resp, totalsB, rows };
+}
+
 /** Public entry point. Splits three kinds of metric out of `req.metrics`:
  *  real GA4 apiNames, `event:*` virtual metrics (per-event counts — GA4 has
  *  no such metric natively, it's eventCount filtered by eventName), and
@@ -709,7 +767,8 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   const needsDenom = convRateMetrics.length > 0;
 
   if (eventNames.length === 0 && !needsDenom) {
-    return runCoreReport({ ...req, metrics: realMetrics });
+    const resp = await runCoreReport({ ...req, metrics: realMetrics });
+    return req.rangeBAverageDivisor ? averagePreviousPeriod(resp, req.rangeBAverageDivisor) : resp;
   }
 
   const dims = (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
@@ -730,7 +789,8 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
     needsDenom ? runCoreReport({ ...req, metrics: denomMetrics }) : Promise.resolve(null),
   ]);
 
-  return mergeReports(req, rawMetrics, realMetrics, eventNames, convRateMetrics, base, pivot, denom, dims);
+  const merged = mergeReports(req, rawMetrics, realMetrics, eventNames, convRateMetrics, base, pivot, denom, dims);
+  return req.rangeBAverageDivisor ? averagePreviousPeriod(merged, req.rangeBAverageDivisor) : merged;
 }
 
 // ---------- Data: GA4-native funnel reports (v1alpha runFunnelReport) ----------

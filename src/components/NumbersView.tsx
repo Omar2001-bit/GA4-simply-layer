@@ -1,10 +1,10 @@
 "use client";
 
-import { CaretDownIcon, CaretUpIcon, TrayIcon } from "@phosphor-icons/react";
+import { TrayIcon } from "@phosphor-icons/react";
 import { metricLabel } from "./ChartView";
+import { Delta } from "./DeltaBadge";
 import { bucketOverlapsRange, detectGranularity } from "@/lib/dates";
-import { deltaPct, fmtBucketLabel, fmtDelta, fmtValue, humanize } from "@/lib/format";
-import { DELTA_DOWN, DELTA_UP } from "@/lib/theme";
+import { deltaPct, fmtBucketLabel, fmtValue, humanize } from "@/lib/format";
 import { metricIsInverted, type ColorPeriod, type MetaItem, type ReportResponse } from "@/lib/types";
 
 interface Props {
@@ -12,22 +12,6 @@ interface Props {
   metricsMeta?: MetaItem[]; // for pretty names
   compact?: boolean;
   colorPeriods?: ColorPeriod[]; // highlight-period tinting on date rows
-}
-
-/** `invert` flips the good/bad coloring for metrics where more is worse
- *  (cart removals, refunds…): an increase reads red, a decrease green. The
- *  arrow still follows the sign — only the judgment color inverts. */
-export function Delta({ value, invert }: { value: number | null; invert?: boolean }) {
-  if (value === null) return <span className="text-[#7f959d]">–</span>;
-  const good = invert ? value < 0 : value > 0;
-  const color = value === 0 ? DELTA_UP : good ? DELTA_UP : DELTA_DOWN;
-  return (
-    <span style={{ color }} className="inline-flex items-center gap-0.5 font-medium tabular-nums">
-      {value !== 0 &&
-        (value > 0 ? <CaretUpIcon size={10} weight="fill" /> : <CaretDownIcon size={10} weight="fill" />)}
-      {fmtDelta(value)}
-    </span>
-  );
 }
 
 interface TileProps {
@@ -56,7 +40,7 @@ export function KpiTileContent({ apiName, data, metricsMeta, compact }: TileProp
       </div>
       {data.rangeB && (
         <div className="mt-1 flex items-baseline gap-2 text-xs">
-          <Delta value={deltaPct(a, b)} invert={metricIsInverted(apiName)} />
+          <Delta value={deltaPct(a, b)} invert={metricIsInverted(apiName)} apiName={apiName} prevValue={b} />
           <span className="text-[#7f959d]">vs {fmtValue(b ?? 0, type, data.currencyCode)}</span>
         </div>
       )}
@@ -139,7 +123,15 @@ export default function NumbersView({ data, metricsMeta, colorPeriods }: Props) 
                   const a = r.a[mi] ?? 0;
                   const b = r.b?.[mi];
                   return hasCompare ? (
-                    <FragmentCells key={m} a={a} b={b} type={type} currencyCode={data.currencyCode} invert={metricIsInverted(m)} />
+                    <FragmentCells
+                      key={m}
+                      apiName={m}
+                      a={a}
+                      b={b}
+                      type={type}
+                      currencyCode={data.currencyCode}
+                      invert={metricIsInverted(m)}
+                    />
                   ) : (
                     <td key={m} className="px-4 py-2.5 text-right tabular-nums text-white">
                       {fmtValue(a, type, data.currencyCode)}
@@ -167,12 +159,14 @@ function FragmentHeads() {
 }
 
 function FragmentCells({
+  apiName,
   a,
   b,
   type,
   currencyCode,
   invert,
 }: {
+  apiName: string;
   a: number;
   b?: number;
   type?: string;
@@ -186,7 +180,7 @@ function FragmentCells({
         {b === undefined ? "–" : fmtValue(b, type, currencyCode)}
       </td>
       <td className="px-2 py-2.5 text-right">
-        <Delta value={deltaPct(a, b)} invert={invert} />
+        <Delta value={deltaPct(a, b)} invert={invert} apiName={apiName} prevValue={b} />
       </td>
     </>
   );

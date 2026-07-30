@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, CheckIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArrowRightIcon, CheckIcon, PlusIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import DatePicker from "./DatePicker";
 import MetaPicker from "./MetaPicker";
@@ -65,6 +65,31 @@ export default function ReportEditor({
   savedAt,
 }: Props) {
   const set = (patch: Partial<ReportConfig>) => onChange({ ...config, ...patch });
+
+  // The list of every client's GA4 property is sensitive on its own — an
+  // editor shouldn't see OTHER clients' property names just by opening this
+  // dropdown. The <select> (and its <option> list) only ever renders after
+  // the password below is entered correctly; before that, only the current
+  // property's own name shows, as plain read-only text.
+  const PROPERTY_SWITCH_PASSWORD = "123456789";
+  const [propertyUnlocked, setPropertyUnlocked] = useState(false);
+  const [pendingPropertyUnlock, setPendingPropertyUnlock] = useState(false);
+  const [propertyPassword, setPropertyPassword] = useState("");
+  const [propertyError, setPropertyError] = useState(false);
+  const cancelPropertyUnlock = () => {
+    setPendingPropertyUnlock(false);
+    setPropertyPassword("");
+    setPropertyError(false);
+  };
+  const confirmPropertyUnlock = () => {
+    if (propertyPassword !== PROPERTY_SWITCH_PASSWORD) {
+      setPropertyError(true);
+      return;
+    }
+    setPropertyUnlocked(true);
+    cancelPropertyUnlock();
+  };
+
   const filters = config.filters ?? [];
   const dims = configDimensions(config);
   const setDims = (next: string[]) =>
@@ -197,13 +222,85 @@ export default function ReportEditor({
       </div>
       <div>
         <label className={labelCls}>GA4 property</label>
-        <select className={selectCls} value={config.property} onChange={(e) => set({ property: e.target.value })}>
-          {properties.map((p) => (
-            <option key={p.property} value={p.property}>
-              {p.displayName} — {p.property.replace("properties/", "")}
-            </option>
-          ))}
-        </select>
+        {propertyUnlocked ? (
+          <select
+            autoFocus
+            className={selectCls}
+            value={config.property}
+            onChange={(e) => {
+              if (e.target.value !== config.property) set({ property: e.target.value });
+              // re-lock immediately after a pick — the unlock is for this one
+              // switch, not a standing session-wide view of every client
+              setPropertyUnlocked(false);
+            }}
+            onBlur={() => setPropertyUnlocked(false)}
+          >
+            {properties.map((p) => (
+              <option key={p.property} value={p.property}>
+                {p.displayName} — {p.property.replace("properties/", "")}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <span className={`${inputCls} flex-1 truncate text-[#c2d1d5]`}>
+              {properties.find((p) => p.property === config.property)?.displayName ??
+                config.property.replace("properties/", "") ??
+                "—"}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingPropertyUnlock(true);
+                setPropertyPassword("");
+                setPropertyError(false);
+              }}
+              className="focus-ring shrink-0 rounded-lg border border-white/10 px-2.5 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-white/25 hover:text-[#c2d1d5]"
+            >
+              Change
+            </button>
+          </div>
+        )}
+        {/* other clients' property names never render until the password below
+            is correct — pendingPropertyUnlock only ever gates the fetch/reveal
+            of `properties` into the select above, never lists them itself */}
+        {pendingPropertyUnlock && (
+          <div className="animate-rise-in mt-2 space-y-1.5 rounded-xl border border-[#e6a23c]/30 bg-[#081219] p-2.5">
+            <p className="flex items-center gap-1.5 text-[11px] leading-snug text-[#e6a23c]">
+              <WarningIcon size={13} className="shrink-0" weight="fill" />
+              This lists every client&rsquo;s property — enter the password to see it.
+            </p>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="password"
+                autoFocus
+                value={propertyPassword}
+                onChange={(e) => {
+                  setPropertyPassword(e.target.value);
+                  setPropertyError(false);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && confirmPropertyUnlock()}
+                placeholder="Password"
+                className={`min-w-0 flex-1 ${smallFieldCls}`}
+              />
+              <button
+                type="button"
+                onClick={confirmPropertyUnlock}
+                className="focus-ring shrink-0 rounded-lg bg-[#6ae499] px-2.5 py-1.5 text-xs font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
+              >
+                Unlock
+              </button>
+              <button
+                type="button"
+                onClick={cancelPropertyUnlock}
+                className="focus-ring shrink-0 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#c2d1d5]"
+              >
+                Cancel
+              </button>
+            </div>
+            {propertyError && <p className="text-[11px] text-[#e66767]">Wrong password.</p>}
+          </div>
+        )}
       </div>
 
       <div>
@@ -471,7 +568,10 @@ export default function ReportEditor({
                         className={`min-w-0 flex-1 ${smallFieldCls}`}
                         value={s.eventName}
                         onChange={(e) =>
-                          setStep({ eventName: e.target.value, label: s.label || humanizeEvent(e.target.value) })
+                          // always resync the label to the newly picked event — there's no
+                          // separate label field in this UI, so a stale label from a
+                          // previously-picked event must never survive a later change
+                          setStep({ eventName: e.target.value, label: humanizeEvent(e.target.value) })
                         }
                       >
                         <option value="">Pick an event…</option>
