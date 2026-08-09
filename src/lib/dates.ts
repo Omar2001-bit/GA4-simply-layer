@@ -10,6 +10,17 @@ function fmt(d: Date): string {
 function addDays(d: Date, n: number): Date {
   const c = new Date(d);
   c.setDate(c.getDate() + n);
+  // A DST spring-forward that lands exactly on local midnight makes that
+  // wall-clock time not exist that day, so JS silently normalizes it to
+  // 01:00 — every subsequent addDays call then keeps carrying that +1h
+  // instead of midnight. Iterate that enough times (e.g. enumerateDates over
+  // a range crossing the transition) and the drifted timestamp eventually
+  // compares as "later than" a freshly-constructed midnight for the same
+  // calendar date, silently dropping that final day. Re-pin to local
+  // midnight after every call so the drift can never accumulate — every
+  // caller in this file treats dates as pure calendar days, never
+  // time-of-day, so this is always safe.
+  c.setHours(0, 0, 0, 0);
   return c;
 }
 

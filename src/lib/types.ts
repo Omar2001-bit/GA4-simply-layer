@@ -129,6 +129,49 @@ export function makeConvRateMetric(eventName: string, denom: ConvDenom): string 
   return `${denom === "totalUsers" ? CONV_USER_PREFIX : CONV_SESSION_PREFIX}${eventName}`;
 }
 
+// GA4's own "average"/"rate"/"per X" metrics are already a ratio GA4 computed
+// over whatever range they're queried for — NOT a summable count.
+// averagePurchaseRevenue for a 68-day window is already "the average order
+// value across those 68 days," not "68 days' worth of average that needs
+// dividing back down." Dividing one of these by multiPeriodAvg's N (the same
+// treatment correctly applied to eventCount/purchaseRevenue/sessions)
+// silently corrupts it — and GA4's own per-metric `type` on the report
+// response (TYPE_FLOAT/TYPE_CURRENCY/TYPE_SECONDS/...) is USELESS for
+// telling additive and non-additive metrics apart: bounceRate is TYPE_FLOAT
+// same as some counts, averagePurchaseRevenue is TYPE_CURRENCY same as plain
+// totalRevenue, and a custom calcMetric:*_conversion_rate reports as the
+// catch-all TYPE_STANDARD with no signal at all — verified live against this
+// property's actual metric catalog. Name pattern is the only usable signal
+// GA4 gives us, so match its naming convention broadly:
+//   - "average" as a whole word anywhere (averagePurchaseRevenue, and
+//     organicGoogleSearchAveragePosition where it's mid-string not a prefix)
+//   - "Per<Something>" anywhere (PerUser, PerSession, PerClick, PerKeyEvent,
+//     PerMau/PerWau/PerPurchaser/PerNewUser, ...) — a per-unit ratio
+//     regardless of which unit
+//   - "Rate" at the end, or followed by ":" (sessionKeyEventRate vs. its
+//     per-event-scoped sessionKeyEventRate:purchase variant)
+// backstopped by an explicit list for the ones that don't fit any pattern
+// (returnOnAdSpend), plus a looser snake_case substring check for
+// calcMetric:* custom calculated metrics, whose suffix is an arbitrary
+// property-owner-chosen id (checkout_user_conversion_rate) that won't match
+// GA4's own camelCase convention. When genuinely unsure, err toward flagging
+// as non-additive: a false positive misses a division (visibly too-high
+// total, easy to spot) while a false negative silently corrupts a ratio
+// (looks plausible, easy to miss) — see the multiPeriodAvg incident this
+// guards against.
+const GA4_RATIO_METRICS = new Set(["returnOnAdSpend"]);
+const GA4_RATIO_METRIC_PATTERN = /[Aa]verage[A-Z]|Per[A-Z]|Rate(:|$)/;
+const CALC_METRIC_RATIO_PATTERN = /rate|percent|ratio|average/i;
+
+/** True for a real (non-virtual) GA4 metric that's already an average/ratio
+ *  — see the comment above for why these can never be divided by
+ *  multiPeriodAvg's N the way count/revenue/session totals can. */
+export function isNonAdditiveGa4Metric(apiName: string): boolean {
+  if (GA4_RATIO_METRICS.has(apiName) || GA4_RATIO_METRIC_PATTERN.test(apiName)) return true;
+  if (apiName.startsWith("calcMetric:")) return CALC_METRIC_RATIO_PATTERN.test(apiName.slice("calcMetric:".length));
+  return false;
+}
+
 // Events where MORE is BAD — an increase should read red, a decrease green.
 // Explicit names for this stack's known events, plus generic bad-signal
 // patterns so future events (refund_requested, checkout_error…) invert

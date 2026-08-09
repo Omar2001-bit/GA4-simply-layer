@@ -6,6 +6,7 @@ import {
   eventMetricName,
   isConvRateMetric,
   isEventMetric,
+  isNonAdditiveGa4Metric,
   makeEventMetric,
   TYPE_RATE_PERCENT,
 } from "./types";
@@ -705,14 +706,26 @@ function mergeReports(
  *  (sum of these N-period-averaged days over the whole window == the grand
  *  total / N, so this stays consistent with the totals-only consumers).
  *
- *  Conversion-rate columns are skipped — already a ratio over the same N x
- *  window on both sides, so N cancels out on its own without touching them.
+ *  Conversion-rate columns (convu:* and convs:*) AND native GA4 ratio metrics
+ *  (averagePurchaseRevenue, bounceRate, engagementRate, etc.) are never divided
+ *  by N — see isNonAdditiveGa4Metric in types.ts. GA4 already returns those
+ *  as a computed ratio for whatever range/day they're queried over, not a
+ *  summable count; dividing one by N silently halves/quarters it. For these,
+ *  totalsB is passed through as GA4 returned it, and each day-offset's value
+ *  is a plain mean of however many chunks actually had a row that day (a
+ *  chunk-day GA4 dropped — keepEmptyRows:false — has no valid ratio to
+ *  average in, unlike an additive metric where "dropped" correctly means
+ *  "zero that day"). Additive metrics keep dividing by the fixed N, with a
+ *  dropped chunk-day contributing 0 (it must still count toward N — treating
+ *  it as "skip and shrink the denominator" disagrees with totalsB, which is
+ *  always /N, and inflates the daily average whenever any chunk had a quiet
+ *  day).
  *  Categorical (non-date) breakdowns have no day-offset concept, so each
- *  row's raw sum is just divided by N as before. */
+ *  row's raw sum is just divided by N as before (rate metrics excepted). */
 function averagePreviousPeriod(resp: ReportResponse, divisor: number): ReportResponse {
   if (!(divisor > 1) || !resp.totalsB) return resp;
-  const isRate = resp.metrics.map(isConvRateMetric);
-  const divideArr = (arr: number[]) => arr.map((v, i) => (isRate[i] ? v : v / divisor));
+  const isNonAdditive = resp.metrics.map((m) => isConvRateMetric(m) || isNonAdditiveGa4Metric(m));
+  const divideArr = (arr: number[]) => arr.map((v, i) => (isNonAdditive[i] ? v : v / divisor));
   const totalsB = divideArr(resp.totalsB);
 
   const granularity = detectGranularity(resp.dimensions);
@@ -732,15 +745,15 @@ function averagePreviousPeriod(resp: ReportResponse, divisor: number): ReportRes
 
   const rows: ReportRow[] = currRows.map((r, i) => {
     const sum = new Array<number>(nMetrics).fill(0);
-    let seen = 0;
+    let seenCount = 0;
     for (let k = 0; k < n; k++) {
       const day = prevDaily[k * d + i];
       if (!day) continue;
-      seen++;
+      seenCount++;
       day.forEach((v, mi) => (sum[mi] += v));
     }
-    // no real single date behind this average — b only, bDim intentionally omitted
-    return { dim: r.dim, a: r.a, b: seen > 0 ? sum.map((v) => v / seen) : undefined };
+    const b = sum.map((v, mi) => (isNonAdditive[mi] ? (seenCount > 0 ? v / seenCount : 0) : v / n));
+    return { dim: r.dim, a: r.a, b };
   });
 
   return { ...resp, totalsB, rows };
