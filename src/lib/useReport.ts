@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveCompare, resolveRange } from "./dates";
 import {
   configDimensions,
+  reportFilters,
   type CompareSel,
   type DateRangeSel,
   type FilterClause,
@@ -60,7 +61,8 @@ export function useReport(config: ReportConfig | null) {
 
   const queryKey = useMemo(() => {
     if (!config) return "";
-    const { property, metrics, rangeA, rangeB, filters, limit } = config;
+    const { property, metrics, rangeA, rangeB, limit } = config;
+    const filters = reportFilters(config);
     return JSON.stringify({ property, dims: configDimensions(config), metrics, rangeA, rangeB, filters, limit });
   }, [config]);
 
@@ -78,7 +80,7 @@ export function useReport(config: ReportConfig | null) {
         metrics: config.metrics,
         rangeA: config.rangeA,
         rangeB: config.rangeB,
-        filters: config.filters,
+        filters: reportFilters(config),
         limit: config.limit,
       }),
       ctrl.signal
@@ -108,7 +110,8 @@ export function useMetricOverrides(config: ReportConfig | null): Record<string, 
 
   const queryKey = useMemo(() => {
     if (!config || !overrides || Object.keys(overrides).length === 0) return "";
-    const { property, filters, limit } = config;
+    const { property, limit } = config;
+    const filters = reportFilters(config);
     return JSON.stringify({ property, dims: configDimensions(config), filters, limit, overrides });
   }, [config, overrides]);
 
@@ -128,7 +131,7 @@ export function useMetricOverrides(config: ReportConfig | null): Record<string, 
             metrics: [metric],
             rangeA: o.rangeA,
             rangeB: o.rangeB,
-            filters: config.filters,
+            filters: reportFilters(config),
             limit: config.limit,
           })
         )

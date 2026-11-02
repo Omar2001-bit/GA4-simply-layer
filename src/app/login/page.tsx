@@ -1,6 +1,6 @@
 "use client";
 
-import { ChartLineUpIcon, CircleNotchIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Icon } from "@/components/Icon";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -32,7 +32,7 @@ export default function LoginPage() {
       >
         <div className="flex flex-col items-center gap-3 text-center">
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#6ae499]/15 text-[#6ae499]">
-            <ChartLineUpIcon size={20} weight="bold" />
+            <Icon name="chart-growth" size={20} />
           </span>
           <div>
             <h1 className="text-lg font-semibold text-white">GA4 Simply Layer</h1>
@@ -52,7 +52,7 @@ export default function LoginPage() {
           />
           {error && (
             <p className="animate-fade-in mt-2 flex items-center gap-1.5 text-sm text-[#e66767]">
-              <WarningCircleIcon size={14} />
+              <Icon name="warning" size={14} />
               {error}
             </p>
           )}
@@ -60,9 +60,11 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy || !password}
-          className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+          className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
         >
-          {busy && <CircleNotchIcon size={14} className="animate-spin" />}
+          {busy && (
+            <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current border-t-transparent" />
+          )}
           {busy ? "Checking…" : "Open dashboard"}
         </button>
       </form>

@@ -1,4 +1,4 @@
-import { ChartLineUpIcon } from "@phosphor-icons/react/dist/ssr";
+import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import HeaderNav from "@/components/HeaderNav";
@@ -15,7 +15,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
             className="focus-ring flex min-w-0 items-center gap-2 rounded font-semibold text-white transition-opacity duration-150 hover:opacity-80"
           >
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[#6ae499]/15 text-[#6ae499]">
-              <ChartLineUpIcon size={14} weight="bold" />
+              <Icon name="chart-growth" size={14} />
             </span>
             <span className="truncate">GA4 Simply Layer</span>
           </Link>

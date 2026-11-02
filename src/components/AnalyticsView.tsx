@@ -63,7 +63,7 @@ export function buildInsights(
 const SEVERITY_DOT: Record<EngineInsight["severity"], string> = {
   critical: DELTA_DOWN,
   good: DELTA_UP,
-  warning: "#e6a23c", // existing brand amber (METRIC_COLORS)
+  warning: "#e6a23c", // non-brand dataviz amber (METRIC_COLORS) — not a documented Optimizers brand color
   info: "#6ae499",
 };
 

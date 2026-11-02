@@ -14,7 +14,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { ArrowLeftIcon, CaretRightIcon, CheckIcon, FunnelIcon, LightbulbIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -36,6 +36,8 @@ import {
   entryKey,
   nextFloatId,
   reconcileLayout,
+  reportFilters,
+  segmentConditions,
   SECTION_TITLES,
   type ChartType,
   type EntryRef,
@@ -87,11 +89,11 @@ function CollapsibleHeader({
         collapsed ? "" : "mb-2"
       }`}
     >
-      <CaretRightIcon
+      <Icon
+        name="chevron-right"
         size={11}
-        weight="bold"
         className="shrink-0 transition-transform duration-150"
-        style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+        style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" } as React.CSSProperties}
       />
       {icon}
       {title}
@@ -499,7 +501,7 @@ export default function ReportCanvas({
                         }
                         className={`focus-ring whitespace-nowrap px-2.5 py-1.5 text-xs transition-colors duration-150 ${
                           graphView === v.value
-                            ? "bg-[#6ae499] text-[#0e1c26]"
+                            ? "bg-[#6ae499] text-[#020202]"
                             : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
                         }`}
                       >
@@ -522,7 +524,7 @@ export default function ReportCanvas({
                       aria-pressed={chartType === c.value}
                       className={`focus-ring whitespace-nowrap px-2.5 py-1.5 text-xs transition-colors duration-150 ${
                         chartType === c.value
-                          ? "bg-[#6ae499] text-[#0e1c26]"
+                          ? "bg-[#6ae499] text-[#020202]"
                           : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
                       }`}
                     >
@@ -537,7 +539,7 @@ export default function ReportCanvas({
               property={config.property}
               rangeA={config.rangeA}
               rangeB={config.rangeB}
-              filters={config.filters}
+              filters={reportFilters(config)}
               limit={config.limit}
               chartType={chartType}
               viewMode={graphView}
@@ -589,7 +591,7 @@ export default function ReportCanvas({
           <>
             <CollapsibleHeader
               id="insights"
-              icon={<LightbulbIcon size={13} />}
+              icon={<Icon name="lightbulb" size={13} />}
               title="Insights"
               count={block.entries?.length ?? 0}
               collapsed={!!collapsed.insights}
@@ -617,7 +619,7 @@ export default function ReportCanvas({
           <>
             <CollapsibleHeader
               id="funnels"
-              icon={<FunnelIcon size={13} />}
+              icon={<Icon name="filter" size={13} />}
               title="Funnels"
               count={config.funnels?.length ?? 0}
               collapsed={!!collapsed.funnels}
@@ -632,7 +634,14 @@ export default function ReportCanvas({
               ) : (
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                   {config.funnels!.map((fn) => (
-                    <FunnelView key={fn.id} property={config.property} funnel={fn} rangeA={config.rangeA} rangeB={config.rangeB} />
+                    <FunnelView
+                      key={fn.id}
+                      property={config.property}
+                      funnel={fn}
+                      rangeA={config.rangeA}
+                      rangeB={config.rangeB}
+                      segment={segmentConditions(config.segment)}
+                    />
                   ))}
                 </div>
               ))}
@@ -659,12 +668,23 @@ export default function ReportCanvas({
               aria-label="Back to dashboard"
               className="focus-ring flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 text-[#c2d1d5] transition-all duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499] active:scale-95"
             >
-              <ArrowLeftIcon size={16} />
+              <Icon name="arrow-left" size={16} />
             </Link>
           )}
           <div className="min-w-0">
             <h1 className="truncate text-xl font-semibold text-white">{config.name}</h1>
             {config.description && <p className="truncate text-sm text-[#7f959d]">{config.description}</p>}
+            {segmentConditions(config.segment).length > 0 && (
+              <p
+                className="mt-1 inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#6ae499]/40 bg-[#6ae499]/10 px-2.5 py-0.5 text-xs text-[#6ae499]"
+                title={segmentConditions(config.segment)
+                  .map((c) => `${c.field} ${c.not ? "not " : ""}${c.match} "${c.value}"`)
+                  .join(" AND ")}
+              >
+                <Icon name="filter" size={12} />
+                Segment: {config.segment?.name || "Unnamed segment"}
+              </p>
+            )}
           </div>
         </div>
         {!lockView && (
@@ -673,11 +693,11 @@ export default function ReportCanvas({
             onClick={() => setEditing((v) => !v)}
             className={`focus-ring flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-150 active:scale-[0.98] ${
               editing
-                ? "bg-[#6ae499] text-[#0e1c26] hover:bg-[#57cf86]"
+                ? "bg-[#6ae499] text-[#020202] hover:bg-[#57cf86]"
                 : "border border-white/10 text-[#c2d1d5] hover:border-white/25"
             }`}
           >
-            <PencilSimpleIcon size={14} weight={editing ? "fill" : "regular"} />
+            <Icon name="edit-pencil" size={14} />
             {editing ? "Done, view mode" : "Edit report"}
           </button>
         )}
@@ -703,7 +723,7 @@ export default function ReportCanvas({
             ) : (
               showDateSaved && (
                 <span className="animate-pop-in flex items-center gap-1 font-medium text-[#6ae499]">
-                  <CheckIcon size={13} weight="bold" />
+                  <Icon name="check" size={13} />
                   Saved
                 </span>
               )
@@ -731,7 +751,7 @@ export default function ReportCanvas({
             /* blank slate: the report is an empty canvas waiting for its first metric */
             <section className="animate-rise-in flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-[#0e1c26]/50 p-10 text-center">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#6ae499]/30 bg-[#6ae499]/10 text-[#6ae499]">
-                <PlusIcon size={20} weight="bold" />
+                <Icon name="plus" size={20} />
               </span>
               <p className="text-base font-medium text-white">Start with a metric</p>
               <p className="max-w-sm text-sm text-[#7f959d]">
@@ -742,7 +762,7 @@ export default function ReportCanvas({
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
-                  className="focus-ring mt-1 rounded-xl bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
+                  className="focus-ring mt-1 rounded-xl bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
                 >
                   Open editor
                 </button>

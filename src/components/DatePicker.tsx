@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarBlankIcon, CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { fmtDateLabel } from "@/lib/format";
 import { SERIES_A } from "@/lib/theme";
@@ -99,7 +99,7 @@ const DatePicker = forwardRef<DatePickerHandle, Props>(function DatePicker(
         }}
         className="focus-ring flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#081219] px-2 py-1.5 text-sm tabular-nums text-[#c2d1d5] transition-colors duration-150 hover:border-white/25 hover:text-white"
       >
-        <CalendarBlankIcon size={13} className="shrink-0 text-[#7f959d]" />
+        <Icon name="calendar" size={13} className="shrink-0 text-[#7f959d]" />
         {fmtDateLabel(value)}
       </button>
       {open && (
@@ -124,7 +124,7 @@ const DatePicker = forwardRef<DatePickerHandle, Props>(function DatePicker(
               aria-label="Previous month"
               className="focus-ring flex h-7 w-7 items-center justify-center rounded-md text-[#7f959d] transition-colors duration-150 hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <CaretLeftIcon size={13} weight="bold" />
+              <Icon name="chevron-left" size={13} />
             </button>
             <span className="text-xs font-semibold text-white">{MONTH_FMT.format(viewMonth)}</span>
             <button
@@ -137,7 +137,7 @@ const DatePicker = forwardRef<DatePickerHandle, Props>(function DatePicker(
               aria-label="Next month"
               className="focus-ring flex h-7 w-7 items-center justify-center rounded-md text-[#7f959d] transition-colors duration-150 hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <CaretRightIcon size={13} weight="bold" />
+              <Icon name="chevron-right" size={13} />
             </button>
           </div>
           <div className="grid grid-cols-7 gap-y-1 text-center text-[10px] font-medium uppercase tracking-wide text-[#7f959d]">
@@ -166,7 +166,7 @@ const DatePicker = forwardRef<DatePickerHandle, Props>(function DatePicker(
                     disabled
                       ? "cursor-not-allowed text-[#3c4b52]"
                       : isSelected
-                        ? "font-semibold text-[#0e1c26]"
+                        ? "font-semibold text-[#020202]"
                         : isToday
                           ? "text-white ring-1 ring-inset ring-white/20 hover:bg-white/10"
                           : "text-[#c2d1d5] hover:bg-white/10"

@@ -1,17 +1,18 @@
 "use client";
 
-import { FunnelIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useEffect, useRef, useState } from "react";
 import { resolveCompare, resolveRange } from "@/lib/dates";
 import { fmtValue } from "@/lib/format";
 import { DELTA_DOWN, INK_MUTED, SERIES_A, SERIES_B } from "@/lib/theme";
-import type { CompareSel, DateRangeSel, FunnelConfig, FunnelResponse, ResolvedRange } from "@/lib/types";
+import type { CompareSel, DateRangeSel, FilterClause, FunnelConfig, FunnelResponse, ResolvedRange } from "@/lib/types";
 
 interface Props {
   property: string;
   funnel: FunnelConfig;
   rangeA: DateRangeSel;
   rangeB?: CompareSel; // when set (and not "none"), a second funnel renders for that period
+  segment?: FilterClause[]; // report segment conditions — the funnel only counts matching sessions
 }
 
 interface Result {
@@ -96,7 +97,7 @@ function PeriodHeader({ label, range, data }: { label: string; range: ResolvedRa
  *  a comparison period is set, the SAME funnel runs for both periods and
  *  they render as two complete side-by-side funnels — previous on the left,
  *  current on the right — each with its own bars and rates. */
-export default function FunnelView({ property, funnel, rangeA, rangeB }: Props) {
+export default function FunnelView({ property, funnel, rangeA, rangeB, segment }: Props) {
   // one state cell keyed by the request it answers — "loading" is simply
   // "the settled result isn't for the current request", so the effect never
   // needs a synchronous setState to flip a loading flag
@@ -105,7 +106,7 @@ export default function FunnelView({ property, funnel, rangeA, rangeB }: Props) 
 
   const resolvedA = resolveRange(rangeA);
   const resolvedB = rangeB && rangeB.preset !== "none" ? resolveCompare(rangeB, resolvedA) : null;
-  const requestKey = JSON.stringify({ property, steps: funnel.steps, open: funnel.open, resolvedA, resolvedB });
+  const requestKey = JSON.stringify({ property, steps: funnel.steps, open: funnel.open, resolvedA, resolvedB, segment });
   const enabled = funnel.steps.filter((s) => s.eventName).length >= 2;
 
   useEffect(() => {
@@ -119,7 +120,7 @@ export default function FunnelView({ property, funnel, rangeA, rangeB }: Props) 
       const r = await fetch("/api/funnel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ property, funnel, range }),
+        body: JSON.stringify({ property, funnel, range, segment }),
         signal: ctrl.signal,
       });
       const j = await r.json();
@@ -144,7 +145,7 @@ export default function FunnelView({ property, funnel, rangeA, rangeB }: Props) 
     <div className="rounded-xl border border-white/10 bg-[#081219] p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-white">
-          <FunnelIcon size={14} className="text-[#6ae499]" />
+          <Icon name="filter" size={14} className="text-[#6ae499]" />
           {funnel.name || "Untitled funnel"}
         </h3>
         <span className="text-[11px] uppercase tracking-wider" style={{ color: INK_MUTED }}>

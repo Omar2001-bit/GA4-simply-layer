@@ -1,6 +1,6 @@
 "use client";
 
-import { PlusIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
@@ -24,9 +24,9 @@ export default function HeaderNav() {
       </Link>
       <Link
         href="/builder"
-        className="focus-ring flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#6ae499] px-3 py-1.5 font-medium text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
+        className="focus-ring flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#6ae499] px-3 py-1.5 font-medium text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
       >
-        <PlusIcon size={13} weight="bold" />
+        <Icon name="plus" size={13} />
         New report
       </Link>
     </nav>

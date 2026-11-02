@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDownIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useMemo, useState } from "react";
 import { metricLabel } from "./ChartView";
 import { isConvRateMetric, isEventMetric, type MetaItem } from "@/lib/types";
@@ -73,13 +73,13 @@ export default function MetricJumpMenu({ metrics, active, onSelect, metricsMeta 
         aria-expanded={open}
         className="focus-ring flex h-7 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-[11px] text-[#7f959d] transition-all duration-150 hover:border-white/25 hover:text-white active:scale-95"
       >
-        <MagnifyingGlassIcon size={12} />
+        <Icon name="search" size={12} />
         Jump to…
-        <CaretDownIcon
+        <Icon
+          name="chevron-down"
           size={11}
-          weight="bold"
           className="transition-transform duration-150"
-          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" } as React.CSSProperties}
         />
       </button>
       {open && (

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid rangeBAverageDivisor" }, { status: 400 });
   }
   if (body.filters) {
-    if (!Array.isArray(body.filters) || body.filters.length > 10) {
+    if (!Array.isArray(body.filters) || body.filters.length > 20) {
       return NextResponse.json({ error: "Invalid filters" }, { status: 400 });
     }
     for (const f of body.filters) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, WarningIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useRef } from "react";
 import DatePicker, { type DatePickerHandle } from "./DatePicker";
 import { COMPARE_PRESETS, RANGE_PRESETS, maxSelectableDate, multiPeriodChunks, resolveCompare, resolveRange } from "@/lib/dates";
@@ -90,7 +90,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
                   endBRef.current?.open();
                 }}
               />
-              <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+              <Icon name="arrow-right" size={12} className="shrink-0 text-[#7f959d]" />
               <DatePicker
                 ref={endBRef}
                 value={capMax(rangeB.end ?? resolvedB?.endDate ?? maxDate)}
@@ -107,7 +107,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
               >
                 {resolvedB?.startDate}
               </span>
-              <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+              <Icon name="arrow-right" size={12} className="shrink-0 text-[#7f959d]" />
               <DatePicker
                 value={capMax(rangeB.end ?? resolvedB?.endDate ?? maxDate)}
                 max={maxDate}
@@ -145,7 +145,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
             resolvedB && (
               <span className="flex items-center gap-1.5 text-xs tabular-nums text-[#7f959d] sm:text-sm">
                 {resolvedB.startDate}
-                <ArrowRightIcon size={11} className="shrink-0" />
+                <Icon name="arrow-right" size={11} className="shrink-0" />
                 {resolvedB.endDate}
               </span>
             )
@@ -190,7 +190,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
                   endARef.current?.open();
                 }}
               />
-              <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+              <Icon name="arrow-right" size={12} className="shrink-0 text-[#7f959d]" />
               <DatePicker
                 ref={endARef}
                 value={capMax(rangeA.end ?? resolvedA.endDate)}
@@ -207,7 +207,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
                 max={maxDate}
                 onSelect={(date) => onChange({ ...rangeA, start: date }, rangeB)}
               />
-              <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+              <Icon name="arrow-right" size={12} className="shrink-0 text-[#7f959d]" />
               <span className="text-xs tabular-nums text-[#7f959d] sm:text-sm" title="Always rolls forward to yesterday">
                 {resolvedA.endDate}
               </span>
@@ -215,7 +215,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
           ) : (
             <span className="flex items-center gap-1.5 text-xs tabular-nums text-[#7f959d] sm:text-sm">
               {resolvedA.startDate}
-              <ArrowRightIcon size={11} className="shrink-0" />
+              <Icon name="arrow-right" size={11} className="shrink-0" />
               {resolvedA.endDate}
             </span>
           )}
@@ -223,7 +223,7 @@ export default function DateControls({ rangeA, rangeB, onChange, compact }: Prop
       </div>
       {driftingCompare && (
         <p className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: "#e6a23c" }}>
-          <WarningIcon size={13} className="shrink-0" weight="fill" />
+          <Icon name="warning" size={13} className="shrink-0" />
           Previous is a fixed range while Current keeps growing — they&rsquo;ll drift apart daily. Use &ldquo;Fixed
           baseline&rdquo; or &ldquo;Previous period&rdquo; instead.
         </p>

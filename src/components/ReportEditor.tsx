@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, CheckIcon, PlusIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useEffect, useState } from "react";
 import DatePicker from "./DatePicker";
 import MetaPicker from "./MetaPicker";
@@ -11,8 +11,11 @@ import {
   COLOR_PERIOD_PALETTE,
   FILTER_MATCHES,
   MAX_DIMENSIONS,
+  MAX_SEGMENT_CONDITIONS,
+  PAGE_FILTER_FIELDS,
   configDimensions,
   isConvRateMetric,
+  isSegmentDimension,
   isEventMetric,
   makeConvRateMetric,
   makeEventMetric,
@@ -22,6 +25,7 @@ import {
   type MetadataResponse,
   type PropertySummary,
   type ReportConfig,
+  type SegmentConfig,
 } from "@/lib/types";
 
 const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -102,6 +106,17 @@ export default function ReportEditor({
     set({ filters: next });
   };
 
+  const segment: SegmentConfig = config.segment ?? { name: "", conditions: [] };
+  const segmentDims = (metadata?.dimensions ?? []).filter((d) => isSegmentDimension(d.apiName));
+  const setSegment = (patch: Partial<SegmentConfig>) => {
+    const next = { ...segment, ...patch };
+    // an empty segment is no segment — drop it so the report reads as "all sessions"
+    set({ segment: next.conditions.length === 0 && !next.name ? undefined : next });
+  };
+  const setCondition = (i: number, patch: Partial<FilterClause>) =>
+    setSegment({ conditions: segment.conditions.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) });
+  const hasPageFilter = filters.some((f) => PAGE_FILTER_FIELDS.has(f.field) && f.value);
+
   const colorPeriods = config.colorPeriods ?? [];
   const setColorPeriod = (i: number, patch: Partial<ColorPeriod>) =>
     set({ colorPeriods: colorPeriods.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
@@ -136,7 +151,9 @@ export default function ReportEditor({
 
   // real dimension values (event names, channels, countries…) for filter-value suggestions
   const [valueSuggestions, setValueSuggestions] = useState<Record<string, string[]>>({});
-  const filterFields = filters.map((f) => f.field).filter(Boolean).join(",");
+  const filterFields = Array.from(
+    new Set([...filters, ...segment.conditions].map((f) => f.field).filter(Boolean))
+  ).join(",");
   useEffect(() => {
     const fields = filterFields ? filterFields.split(",") : [];
     for (const field of fields) {
@@ -267,7 +284,7 @@ export default function ReportEditor({
         {pendingPropertyUnlock && (
           <div className="animate-rise-in mt-2 space-y-1.5 rounded-xl border border-[#e6a23c]/30 bg-[#081219] p-2.5">
             <p className="flex items-center gap-1.5 text-[11px] leading-snug text-[#e6a23c]">
-              <WarningIcon size={13} className="shrink-0" weight="fill" />
+              <Icon name="warning" size={13} className="shrink-0" />
               This lists every client&rsquo;s property — enter the password to see it.
             </p>
             <div className="flex items-center gap-1.5">
@@ -286,7 +303,7 @@ export default function ReportEditor({
               <button
                 type="button"
                 onClick={confirmPropertyUnlock}
-                className="focus-ring shrink-0 rounded-lg bg-[#6ae499] px-2.5 py-1.5 text-xs font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
+                className="focus-ring shrink-0 rounded-lg bg-[#6ae499] px-2.5 py-1.5 text-xs font-semibold text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
               >
                 Unlock
               </button>
@@ -386,6 +403,102 @@ export default function ReportEditor({
       </div>
 
       <div>
+        <label className={labelCls}>Segment</label>
+        <div className="space-y-2 rounded-xl border border-white/10 bg-[#081219] p-2.5">
+          <input
+            className={`w-full ${smallFieldCls}`}
+            placeholder="Segment name (e.g. Product landers)…"
+            value={segment.name}
+            onChange={(e) => setSegment({ name: e.target.value })}
+          />
+          {segment.conditions.map((c, i) => (
+            <div key={i} className="animate-rise-in space-y-1.5 rounded-lg border border-white/10 p-2">
+              <MetaPicker
+                items={segmentDims}
+                selected={c.field ? [c.field] : []}
+                onToggle={(d) => setCondition(i, { field: c.field === d ? "" : d })}
+                max={1}
+                placeholder="Session / user field (e.g. Landing page)"
+              />
+              <div className="flex gap-1.5">
+                <select
+                  className={`w-32 shrink-0 ${smallFieldCls}`}
+                  value={c.match}
+                  onChange={(e) => setCondition(i, { match: e.target.value as FilterClause["match"] })}
+                >
+                  {FILTER_MATCHES.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className={`min-w-0 flex-1 ${smallFieldCls}`}
+                  placeholder="Value (e.g. /products)…"
+                  value={c.value}
+                  list={c.field ? `values-${c.field}` : undefined}
+                  onChange={(e) => setCondition(i, { value: e.target.value })}
+                />
+                {c.field && valueSuggestions[c.field] && !filters.some((f) => f.field === c.field) && (
+                  <datalist id={`values-${c.field}`}>
+                    {valueSuggestions[c.field].map((v) => (
+                      <option key={v} value={v} />
+                    ))}
+                  </datalist>
+                )}
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#c2d1d5]">
+                  <input
+                    type="checkbox"
+                    checked={!!c.not}
+                    onChange={(e) => setCondition(i, { not: e.target.checked })}
+                    className="focus-ring h-3.5 w-3.5 cursor-pointer accent-[#6ae499]"
+                  />
+                  Exclude matches
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setSegment({ conditions: segment.conditions.filter((_, idx) => idx !== i) })}
+                  aria-label="Remove segment condition"
+                  className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
+                >
+                  <Icon name="trash" size={13} />
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+          {segment.conditions.length < MAX_SEGMENT_CONDITIONS && (
+            <button
+              type="button"
+              onClick={() =>
+                setSegment({ conditions: [...segment.conditions, { field: "landingPage", match: "contains", value: "" }] })
+              }
+              className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
+            >
+              <Icon name="plus" size={13} />
+              Add segment condition
+            </button>
+          )}
+          {(segment.conditions.length > 0 || segment.name) && (
+            <button
+              type="button"
+              onClick={() => set({ segment: undefined })}
+              className="focus-ring w-full rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
+            >
+              Clear segment (back to all sessions)
+            </button>
+          )}
+        </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
+          Applies to the whole report (every number, graph and funnel) and counts whole sessions, so purchases and
+          revenue from those sessions still show. Conditions are all required (AND). GA4 only allows session/user
+          fields here: &ldquo;landed on /products&rdquo;, not &ldquo;visited /products at some point&rdquo;.
+        </p>
+      </div>
+
+      <div>
         <label className={labelCls}>Filters</label>
         <div className="space-y-2">
           {filters.map((f, i) => (
@@ -440,7 +553,7 @@ export default function ReportEditor({
                   aria-label="Remove filter"
                   className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
                 >
-                  <TrashIcon size={13} />
+                  <Icon name="trash" size={13} />
                   Remove
                 </button>
               </div>
@@ -453,10 +566,18 @@ export default function ReportEditor({
             }
             className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
           >
-            <PlusIcon size={13} weight="bold" />
+            <Icon name="plus" size={13} />
             Add filter
           </button>
         </div>
+        {hasPageFilter && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-snug text-[#e6a23c]">
+            <Icon name="filter" size={12} className="mt-0.5 shrink-0" />
+            A page filter only keeps events that fired on those pages. Purchases and revenue happen on checkout
+            pages, so they will show 0. To count everything those visitors did, use a Segment on Landing page
+            instead.
+          </p>
+        )}
       </div>
 
       <div>
@@ -477,7 +598,7 @@ export default function ReportEditor({
                   aria-label="Remove highlight period"
                   className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
                 >
-                  <TrashIcon size={13} />
+                  <Icon name="trash" size={13} />
                 </button>
               </div>
               <div className="flex items-center gap-1.5">
@@ -486,7 +607,7 @@ export default function ReportEditor({
                   max={p.endDate}
                   onSelect={(d) => setColorPeriod(i, { startDate: d })}
                 />
-                <ArrowRightIcon size={12} className="shrink-0 text-[#7f959d]" />
+                <Icon name="arrow-right" size={12} className="shrink-0 text-[#7f959d]" />
                 <DatePicker
                   value={p.endDate}
                   min={p.startDate}
@@ -517,7 +638,7 @@ export default function ReportEditor({
             onClick={addColorPeriod}
             className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
           >
-            <PlusIcon size={13} weight="bold" />
+            <Icon name="plus" size={13} />
             Add highlight period
           </button>
         </div>
@@ -545,7 +666,7 @@ export default function ReportEditor({
                   aria-label="Remove funnel"
                   className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
                 >
-                  <TrashIcon size={13} />
+                  <Icon name="trash" size={13} />
                 </button>
               </div>
               <select
@@ -587,7 +708,7 @@ export default function ReportEditor({
                         aria-label="Remove step"
                         className="focus-ring shrink-0 rounded-md px-1 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
                       >
-                        <TrashIcon size={12} />
+                        <Icon name="trash" size={12} />
                       </button>
                     </div>
                     <div className="flex items-center gap-1.5 pl-[1.375rem]">
@@ -624,7 +745,7 @@ export default function ReportEditor({
                     }
                     className="focus-ring flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-2 py-1.5 text-[11px] text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
                   >
-                    <PlusIcon size={11} weight="bold" />
+                    <Icon name="plus" size={11} />
                     Add step
                   </button>
                 )}
@@ -643,7 +764,7 @@ export default function ReportEditor({
             }
             className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
           >
-            <PlusIcon size={13} weight="bold" />
+            <Icon name="plus" size={13} />
             Add funnel
           </button>
         </div>
@@ -686,7 +807,7 @@ export default function ReportEditor({
           type="button"
           onClick={onSave}
           disabled={saving || !config.name.trim() || config.metrics.length === 0}
-          className="focus-ring rounded-xl bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+          className="focus-ring rounded-xl bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
         >
           {saving ? "Saving…" : "Save preset"}
         </button>
@@ -701,7 +822,7 @@ export default function ReportEditor({
         )}
         {showSaved && (
           <span className="animate-pop-in flex items-center gap-1 text-xs font-medium text-[#6ae499]">
-            <CheckIcon size={13} weight="bold" />
+            <Icon name="check" size={13} />
             Saved
           </span>
         )}

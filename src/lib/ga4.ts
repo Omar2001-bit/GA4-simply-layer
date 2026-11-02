@@ -825,7 +825,8 @@ interface RawFunnelReport {
 export async function runFunnelReport(
   property: string,
   funnel: FunnelConfig,
-  range: ResolvedRange
+  range: ResolvedRange,
+  segment: ReportRequest["filters"] = []
 ): Promise<FunnelResponse> {
   const steps = funnel.steps.filter((s) => s.eventName).slice(0, 10);
   if (steps.length < 2) return { steps: [] };
@@ -862,6 +863,9 @@ export async function runFunnelReport(
         filterExpression: stepExpression(s),
       })),
     },
+    // report segment (session/user-scoped conditions) — narrows the funnel to
+    // matching sessions the same way it narrows every other card
+    ...(buildDimensionFilter(segment) ? { dimensionFilter: buildDimensionFilter(segment) } : {}),
   };
 
   const data = await gaRequest<RawFunnelReport>(

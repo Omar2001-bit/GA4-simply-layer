@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DotsSixVerticalIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -45,7 +45,7 @@ export default function SortableSection({ id, draggable, className, children }: 
           aria-label="Drag to reorder section"
           className="focus-ring touch-none absolute right-3 top-3 z-10 flex h-6 w-6 cursor-grab items-center justify-center rounded-md text-[#7f959d] transition-colors duration-150 hover:bg-white/5 hover:text-white active:cursor-grabbing"
         >
-          <DotsSixVerticalIcon size={15} weight="bold" />
+          <Icon name="drag-handle" size={15} />
         </button>
       )}
       {children}

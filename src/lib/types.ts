@@ -82,6 +82,99 @@ export interface FilterClause {
   not?: boolean;
 }
 
+/** A report-wide segment: whole sessions (or users) matching ALL conditions.
+ *  Unlike a filter on an event-scoped field like pagePath — which keeps only
+ *  the events fired on those pages, so purchases/revenue on /checkout drop
+ *  to 0 — a segment condition sits on a session- or user-scoped field, so
+ *  every event in a matching session (including the purchase) still counts.
+ *  GA4's Data API has no real segments; this is as close as it allows
+ *  without BigQuery: "sessions that STARTED on /products", not "sessions
+ *  that visited /products at any point". */
+export interface SegmentConfig {
+  name: string;
+  conditions: FilterClause[];
+}
+
+export const MAX_SEGMENT_CONDITIONS = 10;
+
+/** Session/user-level GA4 dimensions — constant across every event of a
+ *  session, so filtering on them segments whole sessions. Anything else
+ *  (pagePath, eventName, itemName…) is per-event and would only keep the
+ *  matching events, so it's excluded from the segment picker. */
+const SEGMENT_DIMENSIONS = new Set([
+  "landingPage",
+  "landingPagePlusQueryString",
+  "sessionSource",
+  "sessionMedium",
+  "sessionSourceMedium",
+  "sessionSourcePlatform",
+  "sessionCampaignName",
+  "sessionCampaignId",
+  "sessionDefaultChannelGroup",
+  "sessionPrimaryChannelGroup",
+  "sessionManualTerm",
+  "sessionManualAdContent",
+  "sessionGoogleAdsCampaignName",
+  "firstUserSource",
+  "firstUserMedium",
+  "firstUserSourceMedium",
+  "firstUserCampaignName",
+  "firstUserDefaultChannelGroup",
+  "firstUserPrimaryChannelGroup",
+  "newVsReturning",
+  "signedInWithUserId",
+  "deviceCategory",
+  "deviceModel",
+  "mobileDeviceBranding",
+  "operatingSystem",
+  "operatingSystemWithVersion",
+  "browser",
+  "platform",
+  "platformDeviceCategory",
+  "language",
+  "country",
+  "countryId",
+  "region",
+  "city",
+  "continent",
+  "subContinent",
+  "userAgeBracket",
+  "userGender",
+]);
+
+export function isSegmentDimension(apiName: string): boolean {
+  return (
+    SEGMENT_DIMENSIONS.has(apiName) ||
+    apiName.startsWith("customUser:") ||
+    apiName.startsWith("sessionCustomChannelGroup:")
+  );
+}
+
+/** Event-scoped page fields — a filter on these drops purchase/revenue
+ *  events (they fire on checkout pages), which reads as "broken". */
+export const PAGE_FILTER_FIELDS = new Set([
+  "pagePath",
+  "pagePathPlusQueryString",
+  "pageTitle",
+  "pageLocation",
+  "fullPageUrl",
+  "hostName",
+  "unifiedPagePathScreen",
+  "unifiedScreenName",
+  "contentGroup",
+]);
+
+export function segmentConditions(segment: SegmentConfig | undefined): FilterClause[] {
+  return (segment?.conditions ?? []).filter((f) => f.field && f.value && isSegmentDimension(f.field));
+}
+
+/** Everything the GA4 query should be restricted by: the report's own
+ *  filters ANDed with its segment's conditions. Every report fetch goes
+ *  through this so the segment really applies to the whole report. */
+export function reportFilters(c: Pick<ReportConfig, "filters" | "segment">): FilterClause[] {
+  return [...(c.filters ?? []).filter((f) => f.field && f.value), ...segmentConditions(c.segment)];
+}
+
 // GA4 Data API hard limits per runReport request
 export const MAX_METRICS = 10;
 export const MAX_DIMENSIONS = 9;
@@ -273,6 +366,7 @@ export interface ReportConfig {
   rangeA: DateRangeSel; // current / "after"
   rangeB: CompareSel; // comparison / "before"
   filters?: FilterClause[]; // ANDed dimension filters
+  segment?: SegmentConfig; // report-wide session/user segment, ANDed with filters
   colorPeriods?: ColorPeriod[]; // named date-range highlights, see §8.2
   funnels?: FunnelConfig[]; // GA4-native funnel definitions, rendered in the Funnels section
   // per-metric date override (apiName -> its own rangeA/rangeB), set from the

@@ -9,6 +9,16 @@
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --duration-slow: 320ms;
+
+  /* Optimizers brand tokens (see optimizers-plugins/branding/1.0.0/BRAND_IDENTITY.md
+     and design-system/tokens.css — this file mirrors those values, it does not
+     replace them). New hardcoded hex should reference these instead of a literal. */
+  --op-color-pastel-green: #6ae499;   /* [FACT p.14] primary accent */
+  --op-color-black-forest: #020202;   /* shipped logo-asset black — prefer over the
+                                          nominal #020601 for anything meant to sit
+                                          near/on brand assets (BRAND_IDENTITY.md §4) */
+  --op-color-big-stone: #162a3d;      /* [FACT p.14] secondary dark, "paragraphs and backgrounds" */
+  --op-text-on-green: var(--op-color-black-forest); /* required text color on Pastel Green bg — not optional */
 }
 
 @theme inline {

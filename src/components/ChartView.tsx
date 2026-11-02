@@ -1,6 +1,6 @@
 "use client";
 
-import { ChartLineUpIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import {
   Area,
   AreaChart,
@@ -362,7 +362,7 @@ function TotalsOnlyView({
         </div>
       )}
       <p className="flex max-w-xs items-center gap-1.5 text-xs leading-snug" style={{ color: INK_MUTED }}>
-        <ChartLineUpIcon size={13} className="shrink-0" />
+        <Icon name="chart-growth" size={13} className="shrink-0" />
         No trend to draw, add a breakdown to see this as a line.
       </p>
     </div>
@@ -566,7 +566,7 @@ export default function ChartView({
         className="animate-fade-in flex h-full min-h-[160px] flex-col items-center justify-center gap-1.5 text-xs"
         style={{ color: INK_MUTED }}
       >
-        <ChartLineUpIcon size={18} />
+        <Icon name="chart-growth" size={18} />
         No data for this range.
       </div>
     );

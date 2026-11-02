@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DotsSixVerticalIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -47,7 +47,7 @@ export default function SortableMetricCard({ id, data, draggable, onClick, class
           aria-label="Drag to move card"
           className="focus-ring touch-none absolute right-1 top-1 z-10 flex h-5 w-5 cursor-grab items-center justify-center rounded bg-[#0e1c26]/90 text-[#7f959d] opacity-0 transition-opacity duration-100 hover:text-white focus-visible:opacity-100 group-hover:opacity-100 active:cursor-grabbing"
         >
-          <DotsSixVerticalIcon size={12} weight="bold" />
+          <Icon name="drag-handle" size={12} />
         </button>
       )}
       {children}

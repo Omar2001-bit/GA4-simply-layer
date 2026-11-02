@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarBlankIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { CompareMetricRow, InsightBubble } from "./AnalyticsView";
 import { KpiTileContent } from "./NumbersView";
 import type { EngineInsight } from "@/lib/insightEngine";
@@ -45,7 +45,7 @@ export default function EntryCard({ entry, data, overrideData, metricsMeta, insi
           className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#6ae499]/15 text-[#6ae499]"
           title={`Custom dates for this metric: ${effectiveData.rangeA.startDate} → ${effectiveData.rangeA.endDate}, not the report's own range`}
         >
-          <CalendarBlankIcon size={10} weight="fill" />
+          <Icon name="calendar" size={10} />
         </span>
       )}
     </div>

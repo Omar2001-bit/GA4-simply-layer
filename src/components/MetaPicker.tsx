@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useMemo, useState } from "react";
 import type { MetaItem } from "@/lib/types";
 
@@ -48,11 +48,11 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
         className="focus-ring flex w-full items-center gap-2 rounded-lg border border-white/10 bg-[#081219] px-3 py-2 text-left text-sm text-white transition-colors duration-150 hover:border-white/25"
       >
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <CaretDownIcon
+        <Icon
+          name="chevron-down"
           size={14}
-          weight="bold"
           className="shrink-0 text-[#7f959d] transition-transform duration-150"
-          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" } as React.CSSProperties}
         />
       </button>
       {open && (
@@ -101,7 +101,7 @@ export default function MetaPicker({ items, selected, onToggle, max = 1, placeho
                 }`}
               >
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                  {isSel && <CheckIcon size={13} weight="bold" className="animate-check-pop" />}
+                  {isSel && <Icon name="check" size={13} className="animate-check-pop" />}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{i.uiName}</span>
                 <span className="shrink-0 text-xs text-[#7f959d]">{i.category}</span>

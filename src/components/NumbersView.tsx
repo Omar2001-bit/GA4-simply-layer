@@ -1,6 +1,6 @@
 "use client";
 
-import { TrayIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { metricLabel } from "./ChartView";
 import { Delta } from "./DeltaBadge";
 import { bucketOverlapsRange, detectGranularity } from "@/lib/dates";
@@ -89,7 +89,7 @@ export default function NumbersView({ data, metricsMeta, colorPeriods }: Props) 
             <tr>
               <td colSpan={colCount} className="px-4 py-8 text-center text-xs text-[#7f959d]">
                 <div className="flex flex-col items-center gap-1.5">
-                  <TrayIcon size={18} />
+                  <Icon name="tray" size={18} />
                   No rows for this breakdown.
                 </div>
               </td>

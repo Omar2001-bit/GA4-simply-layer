@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarBlankIcon, CaretLeftIcon, CaretRightIcon, CheckIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useMemo, useState } from "react";
 import ChartView, { metricLabel, type GraphViewMode } from "./ChartView";
 import DateControls from "./DateControls";
@@ -178,7 +178,7 @@ function MetricSlide({
                   aria-pressed={activeGranularity === tv.value}
                   className={`focus-ring whitespace-nowrap px-2.5 py-1.5 text-[11px] transition-colors duration-150 ${
                     activeGranularity === tv.value
-                      ? "bg-[#6ae499] text-[#0e1c26]"
+                      ? "bg-[#6ae499] text-[#020202]"
                       : "text-[#7f959d] hover:bg-white/5 hover:text-[#c2d1d5]"
                   }`}
                 >
@@ -207,7 +207,7 @@ function MetricSlide({
                   : "border-white/10 text-[#7f959d] hover:border-white/25 hover:text-[#c2d1d5]"
               }`}
             >
-              <CalendarBlankIcon size={13} />
+              <Icon name="calendar" size={13} />
               {dateOverride ? "Custom dates" : "Report dates"}
             </button>
           </div>
@@ -228,7 +228,7 @@ function MetricSlide({
               ) : (
                 showDateSaved && (
                   <span className="animate-pop-in flex items-center gap-1 font-medium text-[#6ae499]">
-                    <CheckIcon size={12} weight="bold" />
+                    <Icon name="check" size={12} />
                     Saved
                   </span>
                 )
@@ -325,7 +325,7 @@ export default function MetricCarousel({
             aria-label="Previous metric"
             className="focus-ring flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-[#7f959d] transition-all duration-150 hover:border-white/25 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100"
           >
-            <CaretLeftIcon size={13} weight="bold" />
+            <Icon name="chevron-left" size={13} />
           </button>
           <button
             type="button"
@@ -334,7 +334,7 @@ export default function MetricCarousel({
             aria-label="Next metric"
             className="focus-ring flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-[#7f959d] transition-all duration-150 hover:border-white/25 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100"
           >
-            <CaretRightIcon size={13} weight="bold" />
+            <Icon name="chevron-right" size={13} />
           </button>
         </div>
       )}

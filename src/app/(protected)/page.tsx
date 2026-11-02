@@ -1,6 +1,6 @@
 "use client";
 
-import { ChartBarIcon, PlusIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import ReportPreviewCard from "@/components/ReportPreviewCard";
@@ -46,7 +46,7 @@ export default function MegaDashboard() {
 
       {error && (
         <p className="flex items-center gap-1.5 text-sm text-[#e66767]">
-          <WarningCircleIcon size={15} />
+          <Icon name="warning" size={15} />
           {error}
         </p>
       )}
@@ -54,14 +54,14 @@ export default function MegaDashboard() {
       {presets && presets.reports.length === 0 && (
         <div className="animate-rise-in flex flex-col items-center gap-3 rounded-2xl border border-dashed border-white/15 p-12 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#6ae499]/30 bg-[#6ae499]/10 text-[#6ae499]">
-            <ChartBarIcon size={20} />
+            <Icon name="chart-growth" size={20} />
           </span>
           <p className="text-[#c2d1d5]">No reports yet.</p>
           <Link
             href="/builder"
-            className="focus-ring mt-1 flex items-center gap-1.5 rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#0e1c26] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
+            className="focus-ring mt-1 flex items-center gap-1.5 rounded-lg bg-[#6ae499] px-4 py-2 text-sm font-semibold text-[#020202] transition-all duration-150 hover:bg-[#57cf86] active:scale-[0.98]"
           >
-            <PlusIcon size={14} weight="bold" />
+            <Icon name="plus" size={14} />
             Create your first report
           </Link>
         </div>

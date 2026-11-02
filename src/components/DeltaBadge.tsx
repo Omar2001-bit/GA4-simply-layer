@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDownIcon, CaretUpIcon } from "@phosphor-icons/react";
+import { Icon } from "./Icon";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { explainDelta } from "@/lib/deltaExplain";
@@ -71,7 +71,7 @@ export function Delta({ value, invert, apiName, prevValue }: Props) {
   const badge = (
     <span style={{ color }} className="inline-flex items-center gap-0.5 font-medium tabular-nums">
       {value !== 0 &&
-        (value > 0 ? <CaretUpIcon size={10} weight="fill" /> : <CaretDownIcon size={10} weight="fill" />)}
+        (value > 0 ? <Icon name="chevron-up" size={10} /> : <Icon name="chevron-down" size={10} />)}
       {fmtDelta(value)}
     </span>
   );
