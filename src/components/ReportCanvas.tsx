@@ -28,7 +28,7 @@ import ReportEditor from "./ReportEditor";
 import SortableMetricCard from "./SortableMetricCard";
 import SortableSection from "./SortableSection";
 import { detectGranularity } from "@/lib/dates";
-import { useMetricOverrides, useReport } from "@/lib/useReport";
+import { newReportId, useMetricOverrides, useReport } from "@/lib/useReport";
 import {
   blockKey,
   CHART_TYPES,
@@ -318,6 +318,38 @@ export default function ReportCanvas({
     if (!confirm(`Delete report "${config.name}"?`)) return;
     await fetch(`/api/presets?id=${config.id}`, { method: "DELETE" });
     router.push("/");
+  };
+
+  // Duplicate: same definition (metrics, segment, filters, funnels, layout,
+  // dates) under a fresh id, saved right away, then opened in the editor so
+  // the copy can be renamed and changed without touching the original.
+  const [duplicating, setDuplicating] = useState(false);
+  const duplicate = async () => {
+    if (duplicating) return;
+    setDuplicating(true);
+    try {
+      const now = new Date().toISOString();
+      const copy: ReportConfig = {
+        ...structuredClone({ ...config, chartType }),
+        id: newReportId(),
+        name: `Copy of ${config.name}`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(copy),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || "Could not duplicate report");
+        return;
+      }
+      router.push(`/report/${copy.id}`);
+    } finally {
+      setDuplicating(false);
+    }
   };
 
   const jumpToMetric = (entry: EntryRef) => {
@@ -688,18 +720,32 @@ export default function ReportCanvas({
           </div>
         </div>
         {!lockView && (
-          <button
-            type="button"
-            onClick={() => setEditing((v) => !v)}
-            className={`focus-ring flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-150 active:scale-[0.98] ${
-              editing
-                ? "bg-[#6ae499] text-[#020202] hover:bg-[#57cf86]"
-                : "border border-white/10 text-[#c2d1d5] hover:border-white/25"
-            }`}
-          >
-            <Icon name="edit-pencil" size={14} />
-            {editing ? "Done, view mode" : "Edit report"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {!isNew && (
+              <button
+                type="button"
+                onClick={duplicate}
+                disabled={duplicating}
+                title="Make a copy of this report"
+                className="focus-ring flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-[#c2d1d5] transition-all duration-150 hover:border-white/25 active:scale-[0.98] disabled:opacity-50"
+              >
+                <Icon name="copy" size={14} />
+                {duplicating ? "Copying…" : "Duplicate"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditing((v) => !v)}
+              className={`focus-ring flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-150 active:scale-[0.98] ${
+                editing
+                  ? "bg-[#6ae499] text-[#020202] hover:bg-[#57cf86]"
+                  : "border border-white/10 text-[#c2d1d5] hover:border-white/25"
+              }`}
+            >
+              <Icon name="edit-pencil" size={14} />
+              {editing ? "Done, view mode" : "Edit report"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -741,6 +787,8 @@ export default function ReportCanvas({
             metadata={metadata}
             onSave={save}
             onDelete={isNew ? undefined : del}
+            onDuplicate={isNew ? undefined : duplicate}
+            duplicating={duplicating}
             saving={saving}
             savedAt={savedAt}
           />

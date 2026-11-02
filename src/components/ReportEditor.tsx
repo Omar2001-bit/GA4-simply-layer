@@ -37,6 +37,8 @@ interface Props {
   metadata: MetadataResponse | null;
   onSave: () => void;
   onDelete?: () => void;
+  onDuplicate?: () => void;
+  duplicating?: boolean;
   saving: boolean;
   savedAt: number | null;
 }
@@ -65,6 +67,8 @@ export default function ReportEditor({
   metadata,
   onSave,
   onDelete,
+  onDuplicate,
+  duplicating,
   saving,
   savedAt,
 }: Props) {
@@ -811,6 +815,17 @@ export default function ReportEditor({
         >
           {saving ? "Saving…" : "Save preset"}
         </button>
+        {onDuplicate && (
+          <button
+            type="button"
+            onClick={onDuplicate}
+            disabled={duplicating}
+            className="focus-ring flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-[#c2d1d5] transition-all duration-150 hover:border-white/25 active:scale-[0.98] disabled:opacity-50"
+          >
+            <Icon name="copy" size={13} />
+            {duplicating ? "Copying…" : "Duplicate"}
+          </button>
+        )}
         {onDelete && (
           <button
             type="button"

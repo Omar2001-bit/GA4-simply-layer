@@ -23,6 +23,13 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   check: <path d="M4 12.5l5 5L20 6" />,
+  // extended (no brand-kit equivalent): two offset sheets, same 24x24 stroke spec
+  copy: (
+    <>
+      <path d="M9 9h11v11H9z" />
+      <path d="M15 9V4H4v11h5" />
+    </>
+  ),
   trash: (
     <>
       <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
