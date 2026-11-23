@@ -407,11 +407,11 @@ export default function ReportEditor({
       </div>
 
       <div>
-        <label className={labelCls}>Segment</label>
+        <label className={labelCls}>Session filter</label>
         <div className="space-y-2 rounded-xl border border-white/10 bg-[#081219] p-2.5">
           <input
             className={`w-full ${smallFieldCls}`}
-            placeholder="Segment name (e.g. Product landers)…"
+            placeholder="Filter name (e.g. Product landers)…"
             value={segment.name}
             onChange={(e) => setSegment({ name: e.target.value })}
           />
@@ -464,7 +464,7 @@ export default function ReportEditor({
                 <button
                   type="button"
                   onClick={() => setSegment({ conditions: segment.conditions.filter((_, idx) => idx !== i) })}
-                  aria-label="Remove segment condition"
+                  aria-label="Remove session filter condition"
                   className="focus-ring flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
                 >
                   <Icon name="trash" size={13} />
@@ -482,7 +482,7 @@ export default function ReportEditor({
               className="focus-ring flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 px-3 py-2 text-xs text-[#7f959d] transition-colors duration-150 hover:border-[#6ae499]/50 hover:text-[#6ae499]"
             >
               <Icon name="plus" size={13} />
-              Add segment condition
+              Add condition
             </button>
           )}
           {(segment.conditions.length > 0 || segment.name) && (
@@ -491,14 +491,16 @@ export default function ReportEditor({
               onClick={() => set({ segment: undefined })}
               className="focus-ring w-full rounded-md px-1.5 py-1 text-xs text-[#7f959d] transition-colors duration-150 hover:text-[#e66767]"
             >
-              Clear segment (back to all sessions)
+              Clear session filter (back to all sessions)
             </button>
           )}
         </div>
         <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
-          Applies to the whole report (every number, graph and funnel) and counts whole sessions, so purchases and
-          revenue from those sessions still show. Conditions are all required (AND). GA4 only allows session/user
-          fields here: &ldquo;landed on /products&rdquo;, not &ldquo;visited /products at some point&rdquo;.
+          Applies to the whole report (every number, graph and funnel) and keeps whole sessions, so purchases and
+          revenue from those sessions still show. Conditions are all required (AND). Session/user fields only:
+          &ldquo;landed on /products&rdquo;, not &ldquo;visited /products at some point&rdquo;. This is a filter,
+          not a GA4 segment: a GA4 Exploration <em>user</em> segment also counts those users&rsquo; later sessions,
+          so it will show higher numbers.
         </p>
       </div>
 
@@ -578,7 +580,7 @@ export default function ReportEditor({
           <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-snug text-[#e6a23c]">
             <Icon name="filter" size={12} className="mt-0.5 shrink-0" />
             A page filter only keeps events that fired on those pages. Purchases and revenue happen on checkout
-            pages, so they will show 0. To count everything those visitors did, use a Segment on Landing page
+            pages, so they will show 0. To count everything those visitors did, use a Session filter on Landing page
             instead.
           </p>
         )}

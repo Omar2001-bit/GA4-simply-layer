@@ -265,6 +265,29 @@ export function isNonAdditiveGa4Metric(apiName: string): boolean {
   return false;
 }
 
+/** GA4 counts that are de-duplicated (users, purchasers) or estimated
+ *  (sessions — HyperLogLog++), so one query over an N-period window does NOT
+ *  equal the sum of N separate per-period queries. A user active in all 3
+ *  periods counts once in the 75-day query but 3 times across the 3 queries. */
+const DEDUPED_COUNT_PATTERN = /(Users|Purchasers)$/;
+const DEDUPED_COUNTS = new Set(["sessions", "engagedSessions"]);
+
+/** True when "average of N previous periods" must be computed the way a
+ *  person does it by hand in GA4 — query each period separately, then take
+ *  the mean of the N results — because pooling the whole N-period window
+ *  (one query ÷ N) gives a different number. Covers de-duplicated/estimated
+ *  counts plus every ratio (GA4-native and conv-rate virtual metrics).
+ *  Plain additive counts and revenue are NOT included: for those one pooled
+ *  query ÷ N is already exactly equal to the per-period mean (verified live). */
+export function isPeriodSplitSensitive(apiName: string): boolean {
+  return (
+    isConvRateMetric(apiName) ||
+    isNonAdditiveGa4Metric(apiName) ||
+    DEDUPED_COUNTS.has(apiName) ||
+    DEDUPED_COUNT_PATTERN.test(apiName)
+  );
+}
+
 // Events where MORE is BAD — an increase should read red, a decrease green.
 // Explicit names for this stack's known events, plus generic bad-signal
 // patterns so future events (refund_requested, checkout_error…) invert

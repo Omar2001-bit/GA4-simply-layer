@@ -1,5 +1,5 @@
 import { JWT } from "google-auth-library";
-import { detectGranularity, enumerateBuckets, granularityDims } from "./dates";
+import { detectGranularity, enumerateBuckets, granularityDims, multiPeriodChunks } from "./dates";
 import {
   convRateDenom,
   convRateEventName,
@@ -7,6 +7,7 @@ import {
   isConvRateMetric,
   isEventMetric,
   isNonAdditiveGa4Metric,
+  isPeriodSplitSensitive,
   makeEventMetric,
   TYPE_RATE_PERCENT,
 } from "./types";
@@ -202,7 +203,7 @@ function chunkMetrics(metrics: string[]): string[][] {
 function buildRowRestrictFilter(dims: string[], dimValues: string[]): object | undefined {
   if (!dimValues.length) return undefined;
   if (dims.length === 1) {
-    return { filter: { fieldName: dims[0], inListFilter: { values: dimValues } } };
+    return { filter: { fieldName: dims[0], inListFilter: { values: dimValues, caseSensitive: true } } };
   }
   const expressions = dimValues.map((combo) => {
     const parts = combo.split(" · ");
@@ -255,11 +256,11 @@ function mergeCoreReportChunks(first: ReportResponse, rest: ReportResponse[]): R
  *  (event:* virtual metrics are resolved separately, see runEventPivot). Any
  *  number of metrics is supported: batches of GA4_METRIC_CAP run as separate
  *  requests and merge back into one response. */
-async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
+async function runCoreReport(req: ReportRequest, rowRestrict?: object): Promise<ReportResponse> {
   // GA4 caps dimensions at 9 per request; metrics are chunked below instead of capped.
   const dims = (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
   const chunks = chunkMetrics(req.metrics);
-  const first = await runCoreReportChunk(req, chunks[0], dims);
+  const first = await runCoreReportChunk(req, chunks[0], dims, rowRestrict);
   if (chunks.length === 1) return first;
 
   const granularity = detectGranularity(dims);
@@ -267,7 +268,9 @@ async function runCoreReport(req: ReportRequest): Promise<ReportResponse> {
   // specific top-N row set — pin every later chunk to that exact set.
   const needsRestrict = dims.length > 0 && !granularity;
   const restrictFilter = needsRestrict ? buildRowRestrictFilter(dims, first.rows.map((r) => r.dim)) : undefined;
-  const rest = await Promise.all(chunks.slice(1).map((m) => runCoreReportChunk(req, m, dims, restrictFilter)));
+  const rest = await Promise.all(
+    chunks.slice(1).map((m) => runCoreReportChunk(req, m, dims, combineFilters(rowRestrict, restrictFilter)))
+  );
   return mergeCoreReportChunks(first, rest);
 }
 
@@ -379,13 +382,18 @@ async function runCoreReportChunk(
   let totalsB: number[] | undefined = hasCompare ? new Array(metrics.length).fill(0) : undefined;
   const rawTotals = data.totals ?? [];
   if (rawTotals.length) {
-    for (const t of rawTotals) {
+    rawTotals.forEach((t, ti) => {
+      // A range with no data at all comes back as an EMPTY totals entry ({}):
+      // no dimensionValues, no metricValues. It must stay zeros — and must not
+      // be mistaken for date_range_0, or it wipes Current's real totals (seen
+      // live: a property with no data in last year's comparison range).
+      if (!t.metricValues?.length) return;
       const dims = t.dimensionValues ?? [];
-      const mets = (t.metricValues ?? []).map((v) => Number(v.value) || 0);
-      const which = drIdx >= 0 ? dims[drIdx]?.value ?? "date_range_0" : "date_range_0";
+      const mets = t.metricValues.map((v) => Number(v.value) || 0);
+      const which = drIdx >= 0 ? dims[drIdx]?.value ?? `date_range_${ti}` : "date_range_0";
       if (which === "date_range_0") totalsA = mets;
       else totalsB = mets;
-    }
+    });
   } else {
     // fall back to summing rows
     for (const row of rowMap.values()) {
@@ -446,8 +454,9 @@ async function runEventPivot(opts: {
   rangeB?: ResolvedRange | null;
   filters?: ReportRequest["filters"];
   limit?: number;
+  rowRestrict?: object; // pins a categorical breakdown to a pre-chosen row set
 }): Promise<PivotResult> {
-  const { property, dims, eventNames, rangeA, rangeB, filters, limit } = opts;
+  const { property, dims, eventNames, rangeA, rangeB, filters, limit, rowRestrict } = opts;
   const hasCompare = !!rangeB;
   const granularity = detectGranularity(dims);
   const isDateOnly = granularity !== null;
@@ -456,7 +465,11 @@ async function runEventPivot(opts: {
   const blank = () => new Array(n).fill(0);
 
   const pivotDims = [...dims, "eventName"];
-  const dimensionFilter = combineFilters(buildDimensionFilter(filters), buildEventNameInListFilter(eventNames));
+  const dimensionFilter = combineFilters(
+    buildDimensionFilter(filters),
+    buildEventNameInListFilter(eventNames),
+    rowRestrict
+  );
 
   const body: Record<string, unknown> = {
     dateRanges: hasCompare ? [rangeA, rangeB] : [rangeA],
@@ -507,7 +520,9 @@ async function runEventPivot(opts: {
       const kA = bucketsA[i];
       const kB = bucketsB[i];
       const a = kA ? (valsA.get(kA) ?? blank()) : blank();
-      const b = kB ? valsB.get(kB) ?? blank() : undefined;
+      // undefined (not zeros) when GA4 had none of these events that bucket —
+      // see mergeReports' lazyB: "no data" must stay distinguishable
+      const b = kB ? valsB.get(kB) : undefined;
       a.forEach((v, k) => (totalsA[k] += v));
       b?.forEach((v, k) => (totalsB![k] += v));
       rows.push({ dim: kA ?? "", bDim: kB, a, b });
@@ -594,35 +609,54 @@ function mergeReports(
     return base?.metricHeaders[i] ?? { name: m, type: "TYPE_INTEGER" };
   });
 
+  // Rows are keyed by BOTH sides' bucket. Keying by `dim` alone collapses
+  // every previous-only bucket of a date compare (dim "" — the previous
+  // window is longer than current, e.g. multiPeriodAvg's N x D days) into a
+  // single row, which silently broke the N-period day-by-day average for any
+  // report mixing real metrics with event:/conv: metrics. All three sources
+  // (base, pivot, denom) enumerate the same canonical buckets, so the
+  // composite key lines them up exactly; categorical rows have no bDim.
+  const rowKey = (r: { dim: string; bDim?: string }) => `${r.dim}|${r.bDim ?? ""}`;
+  // Time-series compare: a previous bucket GA4 returned NO data for keeps
+  // b === undefined (same as runCoreReport's own date-compare rows) instead
+  // of a zero-filled array, so multiPeriodAvg can tell "no data that day"
+  // (skipped when averaging a ratio — there's no ratio to average) apart
+  // from "data, and the value is 0". Zero-filling here made the same report
+  // average differently depending on whether it also had event/conv metrics
+  // (verified live, Misimu: avg purchase revenue for a day off by 10x).
+  // Categorical rows keep zero-filled b as before.
+  const lazyB = hasCompare && !!detectGranularity(dims);
   const rowMap = new Map<string, ReportRow>();
   const order: string[] = [];
   const ensureRow = (dim: string, bDim?: string): ReportRow => {
-    let row = rowMap.get(dim);
+    const k = rowKey({ dim, bDim });
+    let row = rowMap.get(k);
     if (!row) {
-      row = { dim, bDim, a: blank(), b: hasCompare ? blank() : undefined };
-      rowMap.set(dim, row);
-      order.push(dim);
-    } else if (!row.bDim && bDim) {
-      row.bDim = bDim;
+      row = { dim, bDim, a: blank(), b: hasCompare && !lazyB ? blank() : undefined };
+      rowMap.set(k, row);
+      order.push(k);
     }
     return row;
   };
+  const ensureB = (row: ReportRow) => (row.b ??= blank());
 
   if (base) {
     for (const r of base.rows) {
       const row = ensureRow(r.dim, r.bDim);
+      const b = r.b ? ensureB(row) : row.b;
       realIdxInRaw.forEach((rawI, i) => {
         row.a[rawI] = r.a[i] ?? 0;
-        if (row.b && r.b) row.b[rawI] = r.b[i] ?? 0;
+        if (b && r.b) b[rawI] = r.b[i] ?? 0;
       });
     }
   }
   if (pivot) {
     for (const r of pivot.rows) {
       const row = ensureRow(r.dim, r.bDim);
+      const b = r.b ? ensureB(row) : row.b;
       eventIdxInRaw.forEach((rawI, i) => {
         row.a[rawI] = r.a[i] ?? 0;
-        if (row.b && r.b) row.b[rawI] = r.b[i] ?? 0;
+        if (b && r.b) b[rawI] = r.b[i] ?? 0;
       });
     }
   }
@@ -630,19 +664,22 @@ function mergeReports(
   // out below by dim key — but still need to exist in the row set so a day
   // with traffic and zero of the event reads 0%, not "missing".
   if (denom) {
-    for (const r of denom.rows) ensureRow(r.dim, r.bDim);
+    for (const r of denom.rows) {
+      const row = ensureRow(r.dim, r.bDim);
+      if (r.b) ensureB(row);
+    }
   }
 
   const rateOf = (count: number, denomVal: number | undefined) =>
     denomVal && denomVal > 0 ? count / denomVal : 0;
 
   if (convRateInfo.length) {
-    const denomByDim = new Map(denom?.rows.map((r) => [r.dim, r]) ?? []);
-    const pivotByDim = new Map(pivot?.rows.map((r) => [r.dim, r]) ?? []);
-    for (const dim of order) {
-      const row = rowMap.get(dim)!;
-      const pRow = pivotByDim.get(dim);
-      const dRow = denomByDim.get(dim);
+    const denomByDim = new Map(denom?.rows.map((r) => [rowKey(r), r]) ?? []);
+    const pivotByDim = new Map(pivot?.rows.map((r) => [rowKey(r), r]) ?? []);
+    for (const k of order) {
+      const row = rowMap.get(k)!;
+      const pRow = pivotByDim.get(k);
+      const dRow = denomByDim.get(k);
       for (const { rawI, eventIdx, denomIdx } of convRateInfo) {
         row.a[rawI] = rateOf(pRow?.a[eventIdx] ?? 0, dRow?.a[denomIdx]);
         if (row.b) row.b[rawI] = rateOf(pRow?.b?.[eventIdx] ?? 0, dRow?.b?.[denomIdx]);
@@ -768,6 +805,126 @@ function averagePreviousPeriod(resp: ReportResponse, divisor: number): ReportRes
  *  metrics referencing the same event — then everything merges back into
  *  the caller's original metric order. */
 export async function runReport(req: ReportRequest): Promise<ReportResponse> {
+  const resp = await runReportExact(req);
+  return req.rangeBAverageDivisor
+    ? applyPerPeriodMeans(req, averagePreviousPeriod(resp, req.rangeBAverageDivisor))
+    : resp;
+}
+
+function reqDims(req: ReportRequest): string[] {
+  return (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
+}
+
+function isCategorical(dims: string[]): boolean {
+  return dims.length > 0 && !detectGranularity(dims);
+}
+
+/** Rows + totals for one request, before any multiPeriodAvg treatment.
+ *
+ *  For a categorical breakdown (channels, pages, countries…) GA4's own row
+ *  limit is the enemy of exactness, verified live:
+ *   - with a compare, current and previous rows share ONE limit, so a row can
+ *     come back with only one side (the other silently reads 0);
+ *   - real metrics, the event pivot and the conv-rate denominator each rank
+ *     and truncate their own row set, so a row can be missing its events;
+ *   - event-count totals were the sum of only the shown rows, and so were
+ *     GA4 totals of any metric chunk after the first 10.
+ *  So: choose the row set ONCE (top N by the report's first metric over
+ *  Current — what the table sorts by), pin every query to exactly that set,
+ *  and take totals from a separate no-breakdown query, which is GA4's own
+ *  true total for the whole filtered range, not a sum of visible rows. */
+async function runReportExact(req: ReportRequest, rowRestrict?: object): Promise<ReportResponse> {
+  const dims = reqDims(req);
+  if (isCategorical(dims) && !rowRestrict) {
+    const restrict = await pickTopRows(req, dims);
+    const [rows, totals] = await Promise.all([
+      runReportRows(req, restrict),
+      runReportRows({ ...req, dimensions: [], dimension: undefined }),
+    ]);
+    return { ...rows, totalsA: totals.totalsA, totalsB: totals.totalsB };
+  }
+  return runReportRows(req, rowRestrict);
+}
+
+/** The categorical row set the table will show: top `limit` dimension values
+ *  by the report's first metric over Current (event count for event:/conv:
+ *  metrics). Returns a filter pinning queries to exactly those rows, or
+ *  undefined when Current has no rows at all. */
+async function pickTopRows(req: ReportRequest, dims: string[]): Promise<object | undefined> {
+  const first = req.metrics[0];
+  const event = isEventMetric(first) ? eventMetricName(first) : isConvRateMetric(first) ? convRateEventName(first) : null;
+  const metric = event ? "eventCount" : first;
+  const body: Record<string, unknown> = {
+    dateRanges: [req.rangeA],
+    metrics: [{ name: metric }],
+    dimensions: dims.map((name) => ({ name })),
+    limit: String(Math.min(req.limit ?? 25, 1000)),
+    orderBys: [{ metric: { metricName: metric }, desc: true }],
+    keepEmptyRows: false,
+  };
+  const filter = combineFilters(
+    buildDimensionFilter(req.filters),
+    event ? { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: event } } } : undefined
+  );
+  if (filter) body.dimensionFilter = filter;
+  const keyOf = (r: { dimensionValues?: { value?: string }[] }) =>
+    dims.map((_, i) => r.dimensionValues?.[i]?.value ?? "").join(" · ");
+  const data = await gaRequest<RawReport>(`${DATA_API}/${req.property}:runReport`, "POST", body);
+  const limit = Math.min(req.limit ?? 25, 1000);
+  const keys = (data.rows ?? []).map(keyOf);
+
+  // Fewer rows than the limit: a row can be zero on the first metric over
+  // Current yet still have activity in another chosen metric, or only in
+  // Previous (GA4's own compare table shows it either way). Fill the free
+  // slots with any row that has data in the report's metrics in either range.
+  if (keys.length < limit) {
+    const seen = new Set(keys);
+    const realMetrics = req.metrics.filter((m) => !isEventMetric(m) && !isConvRateMetric(m)).slice(0, GA4_METRIC_CAP);
+    const eventNames = [
+      ...new Set(
+        req.metrics.flatMap((m) =>
+          isEventMetric(m) ? [eventMetricName(m)] : isConvRateMetric(m) ? [convRateEventName(m)] : []
+        )
+      ),
+    ];
+    const ranges = req.rangeB ? [req.rangeA, req.rangeB] : [req.rangeA];
+    const fillQueries: Record<string, unknown>[] = [];
+    if (realMetrics.length)
+      fillQueries.push({ metrics: realMetrics.map((name) => ({ name })), filter: buildDimensionFilter(req.filters) });
+    if (eventNames.length)
+      fillQueries.push({
+        metrics: [{ name: "eventCount" }],
+        filter: combineFilters(buildDimensionFilter(req.filters), buildEventNameInListFilter(eventNames)),
+      });
+    const fills = await Promise.all(
+      fillQueries.map((q) => {
+        const b: Record<string, unknown> = {
+          dateRanges: ranges,
+          metrics: q.metrics,
+          dimensions: dims.map((name) => ({ name })),
+          limit: String(limit * ranges.length),
+          keepEmptyRows: false,
+        };
+        if (q.filter) b.dimensionFilter = q.filter;
+        return gaRequest<RawReport>(`${DATA_API}/${req.property}:runReport`, "POST", b);
+      })
+    );
+    for (const f of fills) {
+      for (const r of f.rows ?? []) {
+        if (keys.length >= limit) break;
+        const hasData = (r.metricValues ?? []).some((v) => Number(v.value) !== 0);
+        const k = keyOf(r);
+        if (hasData && !seen.has(k)) {
+          seen.add(k);
+          keys.push(k);
+        }
+      }
+    }
+  }
+  return buildRowRestrictFilter(dims, keys);
+}
+
+async function runReportRows(req: ReportRequest, rowRestrict?: object): Promise<ReportResponse> {
   const rawMetrics = req.metrics;
   const realMetrics = rawMetrics.filter((m) => !isEventMetric(m) && !isConvRateMetric(m));
   const convRateMetrics = rawMetrics.filter(isConvRateMetric);
@@ -780,14 +937,13 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
   const needsDenom = convRateMetrics.length > 0;
 
   if (eventNames.length === 0 && !needsDenom) {
-    const resp = await runCoreReport({ ...req, metrics: realMetrics });
-    return req.rangeBAverageDivisor ? averagePreviousPeriod(resp, req.rangeBAverageDivisor) : resp;
+    return runCoreReport({ ...req, metrics: realMetrics }, rowRestrict);
   }
 
-  const dims = (req.dimensions ?? (req.dimension ? [req.dimension] : [])).slice(0, 9);
+  const dims = reqDims(req);
   const denomMetrics: ["totalUsers", "sessions"] = ["totalUsers", "sessions"];
   const [base, pivot, denom] = await Promise.all([
-    realMetrics.length > 0 ? runCoreReport({ ...req, metrics: realMetrics }) : Promise.resolve(null),
+    realMetrics.length > 0 ? runCoreReport({ ...req, metrics: realMetrics }, rowRestrict) : Promise.resolve(null),
     eventNames.length > 0
       ? runEventPivot({
           property: req.property,
@@ -797,13 +953,124 @@ export async function runReport(req: ReportRequest): Promise<ReportResponse> {
           rangeB: req.rangeB,
           filters: req.filters,
           limit: req.limit,
+          rowRestrict,
         })
       : Promise.resolve(null),
-    needsDenom ? runCoreReport({ ...req, metrics: denomMetrics }) : Promise.resolve(null),
+    needsDenom ? runCoreReport({ ...req, metrics: denomMetrics }, rowRestrict) : Promise.resolve(null),
   ]);
 
-  const merged = mergeReports(req, rawMetrics, realMetrics, eventNames, convRateMetrics, base, pivot, denom, dims);
-  return req.rangeBAverageDivisor ? averagePreviousPeriod(merged, req.rangeBAverageDivisor) : merged;
+  return mergeReports(req, rawMetrics, realMetrics, eventNames, convRateMetrics, base, pivot, denom, dims);
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight, preserving order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/** "Average of N previous periods", the way it's done by hand in GA4.
+ *
+ *  averagePreviousPeriod pools the whole N x D-day window into one query and
+ *  divides by N. That's exact for additive counts and revenue, but NOT for
+ *  de-duplicated/estimated counts (users, purchasers, sessions) or ratios
+ *  (average purchase revenue, ARPU, rates): a user active in all N periods
+ *  counts once in the pooled query but N times across N separate queries,
+ *  and a pooled ratio is a weighted average rather than the mean of the N
+ *  per-period ratios. Verified live (Tharaa, N=3): pooled users/3 = 42,503
+ *  vs per-period mean 44,415.67; pooled avg purchase revenue 1,241.13 vs
+ *  per-period mean 1,253.78.
+ *
+ *  So for those metrics only, query each of the N real periods on its own
+ *  (same filters/dims) and replace Previous with the plain mean of the N
+ *  results — matching "pull 3 periods in GA4, add them up, divide by 3".
+ *  Time-series rows are left as averagePreviousPeriod built them: a single
+ *  day has no cross-period de-duplication, and its day-aligned mean is
+ *  already the per-period mean. Categorical rows get the same per-period
+ *  mean as the totals (a breakdown value missing from a period counts as 0
+ *  for counts, and is skipped for ratios — there's no ratio to average). */
+async function applyPerPeriodMeans(req: ReportRequest, resp: ReportResponse): Promise<ReportResponse> {
+  const n = req.rangeBAverageDivisor;
+  if (!n || !req.rangeB || !resp.totalsB) return resp;
+  const sensitive = resp.metrics.filter(isPeriodSplitSensitive);
+  if (sensitive.length === 0) return resp;
+  const chunks = multiPeriodChunks(req.rangeA, req.rangeB);
+  if (chunks.length !== n) return resp; // B isn't N whole periods: keep pooled result
+
+  const isRatio = (m: string) => isConvRateMetric(m) || isNonAdditiveGa4Metric(m);
+  const dims = reqDims(req);
+  const isTimeSeries = !!detectGranularity(dims);
+  const categorical = isCategorical(dims);
+  // categorical: pin each period's rows to exactly the rows the table shows
+  // (re-ranking per period would drop rows outside that period's own top N)
+  const rowRestrict = categorical ? buildRowRestrictFilter(dims, resp.rows.map((r) => r.dim)) : undefined;
+  // sessions rides along (if not already chosen) purely as a "did this period
+  // have any data at all" signal for the ratio rule below
+  const periodMetrics = sensitive.includes("sessions") ? sensitive : [...sensitive, "sessions"];
+  const sessionsIdx = periodMetrics.indexOf("sessions");
+  const perPeriod = await mapLimit(chunks, 4, async (chunk) => {
+    const periodReq: ReportRequest = {
+      ...req,
+      metrics: periodMetrics,
+      rangeA: chunk,
+      rangeB: undefined,
+      rangeBAverageDivisor: undefined,
+      dimensions: [],
+      dimension: undefined,
+    };
+    // totals always from a no-breakdown query: GA4's true period total
+    const totals = await runReportExact(periodReq);
+    if (!categorical || !rowRestrict) return { totalsA: totals.totalsA, rows: [] as ReportRow[] };
+    const withRows = await runReportExact(
+      { ...periodReq, dimensions: dims, limit: Math.max(resp.rows.length, 1) },
+      rowRestrict
+    );
+    return { totalsA: totals.totalsA, rows: withRows.rows };
+  });
+
+  const totalsB = [...resp.totalsB];
+  // Ratios (average purchase revenue, rates…): a period with NO data at all
+  // has no ratio — GA4 just shows 0 — so it's left out of the mean, the same
+  // rule the day-by-day rows use. A period WITH data whose ratio is 0 counts.
+  // Counts/users: a period with no data genuinely contributes 0 → always ÷ N.
+  const hasData = perPeriod.map((p) => (p.totalsA[sessionsIdx] ?? 0) > 0);
+  const nWithData = hasData.filter(Boolean).length;
+  sensitive.forEach((m, j) => {
+    const i = resp.metrics.indexOf(m);
+    if (isRatio(m)) {
+      const sum = perPeriod.reduce((s, p, k) => s + (hasData[k] ? p.totalsA[j] ?? 0 : 0), 0);
+      totalsB[i] = nWithData ? sum / nWithData : 0;
+    } else {
+      totalsB[i] = perPeriod.reduce((s, p) => s + (p.totalsA[j] ?? 0), 0) / n;
+    }
+  });
+
+  if (isTimeSeries) return { ...resp, totalsB };
+
+  const byDim = perPeriod.map((p) => new Map(p.rows.map((r) => [r.dim, r.a])));
+  const rows = resp.rows.map((r) => {
+    if (!r.b) return r;
+    const b = [...r.b];
+    sensitive.forEach((m, j) => {
+      const i = resp.metrics.indexOf(m);
+      const vals = byDim.map((map) => map.get(r.dim)?.[j]);
+      if (isRatio(m)) {
+        const present = vals.filter((v): v is number => v !== undefined);
+        b[i] = present.length ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+      } else {
+        b[i] = vals.reduce<number>((s, v) => s + (v ?? 0), 0) / n;
+      }
+    });
+    return { ...r, b };
+  });
+  return { ...resp, totalsB, rows };
 }
 
 // ---------- Data: GA4-native funnel reports (v1alpha runFunnelReport) ----------

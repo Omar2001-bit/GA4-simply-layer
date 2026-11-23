@@ -714,7 +714,7 @@ export default function ReportCanvas({
                   .join(" AND ")}
               >
                 <Icon name="filter" size={12} />
-                Segment: {config.segment?.name || "Unnamed segment"}
+                Session filter: {config.segment?.name || "Unnamed filter"}
               </p>
             )}
           </div>
