@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
 import { isAuthed } from "@/lib/auth";
 import { runFunnelReport } from "@/lib/ga4";
-import { isSegmentDimension, type FilterClause, type FunnelConfig, type ResolvedRange } from "@/lib/types";
+import {
+  isSegmentDimension,
+  type FilterClause,
+  type FunnelConfig,
+  type ResolvedRange,
+  type SegmentScope,
+} from "@/lib/types";
 
 interface FunnelApiRequest {
   property: string;
   funnel: FunnelConfig;
   range: ResolvedRange;
   segment?: FilterClause[];
+  scope?: SegmentScope;
 }
 
 export async function POST(req: Request) {
@@ -32,7 +39,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid segment condition" }, { status: 400 });
   }
   try {
-    const data = await runFunnelReport(body.property, body.funnel, body.range, segment);
+    const scope: SegmentScope = body.scope === "user" ? "user" : "session";
+    const data = await runFunnelReport(body.property, body.funnel, body.range, segment, scope);
     return NextResponse.json(data);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

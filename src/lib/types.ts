@@ -93,6 +93,48 @@ export interface FilterClause {
 export interface SegmentConfig {
   name: string;
   conditions: FilterClause[];
+  /** "session" (default): the conditions filter the whole report to matching
+   *  sessions — exact, every card. "user": additionally compute a REAL GA4
+   *  user segment (users with a matching session, and ALL their activity in
+   *  the range) through GA4's own segment engine — see runUserSegment. */
+  scope?: SegmentScope;
+}
+
+export type SegmentScope = "session" | "user";
+
+export function isUserSegment(segment: SegmentConfig | undefined): boolean {
+  return segment?.scope === "user" && segmentConditions(segment).length > 0;
+}
+
+/** One period of a real GA4 user segment. Counts come from GA4's segment
+ *  engine; revenue is part exact, part modelled (`revenueEstimated`). */
+export interface UserSegmentTotals {
+  users: number;
+  purchasers: number;
+  purchases: number;
+  revenue: number;
+  /** "exact": binary decomposition over transaction ids (GA4 segment engine
+   *  counts only); "estimate": AOV fallback (used when the funnel quota fails) */
+  revenueMethod: "exact" | "estimate";
+  /** sessions of segment users (≈, within ~1% of GA4); null when unavailable */
+  sessions: number | null;
+  /** the exact part: revenue from sessions that matched the conditions */
+  revenueExact: number;
+  avgPurchaseRevenue: number;
+  /** per report event: occurrences by segment users (eventName -> count) */
+  events: Record<string, number>;
+  /** events where some user hit the per-user counting cap (count is a floor) */
+  eventsCapped: string[];
+  /** false when GA4 had no data at all for this period */
+  hasData: boolean;
+}
+
+export interface UserSegmentResponse {
+  current: UserSegmentTotals;
+  previous: UserSegmentTotals | null;
+  /** previous is the mean of this many periods (multiPeriodAvg), else 1 */
+  previousPeriods: number;
+  currencyCode?: string;
 }
 
 export const MAX_SEGMENT_CONDITIONS = 10;

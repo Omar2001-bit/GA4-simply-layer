@@ -13,6 +13,14 @@
 
 const PATHS: Record<string, React.ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
+  // extended (no brand-kit equivalent): two people, same 24x24 stroke spec
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6" />
+      <path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2 .8 3 2.9 3 6" />
+    </>
+  ),
   "arrow-right": <path d="M4 12h16M13 5l7 7-7 7" />,
   "arrow-left": <path d="M20 12H4M11 5l-7 7 7 7" />,
   calendar: (

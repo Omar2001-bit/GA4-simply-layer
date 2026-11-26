@@ -5,7 +5,15 @@ import { useEffect, useRef, useState } from "react";
 import { resolveCompare, resolveRange } from "@/lib/dates";
 import { fmtValue } from "@/lib/format";
 import { DELTA_DOWN, INK_MUTED, SERIES_A, SERIES_B } from "@/lib/theme";
-import type { CompareSel, DateRangeSel, FilterClause, FunnelConfig, FunnelResponse, ResolvedRange } from "@/lib/types";
+import type {
+  CompareSel,
+  DateRangeSel,
+  FilterClause,
+  FunnelConfig,
+  FunnelResponse,
+  ResolvedRange,
+  SegmentScope,
+} from "@/lib/types";
 
 interface Props {
   property: string;
@@ -13,6 +21,7 @@ interface Props {
   rangeA: DateRangeSel;
   rangeB?: CompareSel; // when set (and not "none"), a second funnel renders for that period
   segment?: FilterClause[]; // report segment conditions — the funnel only counts matching sessions
+  scope?: SegmentScope; // "user": real GA4 user segment instead of the session filter
 }
 
 interface Result {
@@ -97,7 +106,7 @@ function PeriodHeader({ label, range, data }: { label: string; range: ResolvedRa
  *  a comparison period is set, the SAME funnel runs for both periods and
  *  they render as two complete side-by-side funnels — previous on the left,
  *  current on the right — each with its own bars and rates. */
-export default function FunnelView({ property, funnel, rangeA, rangeB, segment }: Props) {
+export default function FunnelView({ property, funnel, rangeA, rangeB, segment, scope = "session" }: Props) {
   // one state cell keyed by the request it answers — "loading" is simply
   // "the settled result isn't for the current request", so the effect never
   // needs a synchronous setState to flip a loading flag
@@ -106,7 +115,15 @@ export default function FunnelView({ property, funnel, rangeA, rangeB, segment }
 
   const resolvedA = resolveRange(rangeA);
   const resolvedB = rangeB && rangeB.preset !== "none" ? resolveCompare(rangeB, resolvedA) : null;
-  const requestKey = JSON.stringify({ property, steps: funnel.steps, open: funnel.open, resolvedA, resolvedB, segment });
+  const requestKey = JSON.stringify({
+    property,
+    steps: funnel.steps,
+    open: funnel.open,
+    resolvedA,
+    resolvedB,
+    segment,
+    scope,
+  });
   const enabled = funnel.steps.filter((s) => s.eventName).length >= 2;
 
   useEffect(() => {
@@ -120,7 +137,7 @@ export default function FunnelView({ property, funnel, rangeA, rangeB, segment }
       const r = await fetch("/api/funnel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ property, funnel, range, segment }),
+        body: JSON.stringify({ property, funnel, range, segment, scope }),
         signal: ctrl.signal,
       });
       const j = await r.json();

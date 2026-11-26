@@ -494,6 +494,35 @@ export default function ReportEditor({
               Clear session filter (back to all sessions)
             </button>
           )}
+          {segment.conditions.length > 0 && (
+            <div className="space-y-1 border-t border-white/10 pt-2">
+              <span className="text-[11px] uppercase tracking-wider text-[#7f959d]">Also count by users</span>
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/5 p-0.5" role="radiogroup" aria-label="Segment scope">
+                {(
+                  [
+                    { value: "session", label: "Sessions only" },
+                    { value: "user", label: "+ User segment" },
+                  ] as const
+                ).map((o) => {
+                  const active = (segment.scope ?? "session") === o.value;
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setSegment({ scope: o.value })}
+                      className={`focus-ring rounded-md px-2 py-1 text-xs transition-colors duration-150 ${
+                        active ? "bg-[#6ae499] font-medium text-[#020202]" : "text-[#c2d1d5] hover:text-white"
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
         <p className="mt-1.5 text-[11px] leading-snug text-[#7f959d]">
           Applies to the whole report (every number, graph and funnel) and keeps whole sessions, so purchases and
@@ -502,6 +531,15 @@ export default function ReportEditor({
           not a GA4 segment: a GA4 Exploration <em>user</em> segment also counts those users&rsquo; later sessions,
           so it will show higher numbers.
         </p>
+        {segment.scope === "user" && segment.conditions.length > 0 && (
+          <p className="mt-1.5 text-[11px] leading-snug text-[#c2d1d5]">
+            <span className="font-semibold text-[#6ae499]">User segment on:</span> a User segment panel adds GA4&rsquo;s
+            real user segment (users with a matching session, and everything they did in the range), matching an
+            Exploration user segment. Purchases and purchasers come from GA4&rsquo;s own segment engine; revenue is
+            partly estimated (&asymp;, validated within about 1&ndash;4%). Funnels switch to the user segment too.
+            Slower: several GA4 queries per period.
+          </p>
+        )}
       </div>
 
       <div>

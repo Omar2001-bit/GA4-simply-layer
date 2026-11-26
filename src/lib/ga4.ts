@@ -8,6 +8,9 @@ import {
   isEventMetric,
   isNonAdditiveGa4Metric,
   isPeriodSplitSensitive,
+  type SegmentScope,
+  type UserSegmentResponse,
+  type UserSegmentTotals,
   makeEventMetric,
   TYPE_RATE_PERCENT,
 } from "./types";
@@ -56,13 +59,57 @@ function client(): JWT {
   return cachedClient;
 }
 
+// GA4 allows 10 concurrent requests per property; funnel (segment) calls are
+// also the expensive ones (~60 tokens each, 14k tokens/project/hour), so they
+// go through a small semaphore, retry on 429, and are cached in memory.
+const FUNNEL_CONCURRENCY = 4;
+const FUNNEL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const funnelCache = new Map<string, { at: number; data: unknown }>();
+let funnelActive = 0;
+const funnelQueue: (() => void)[] = [];
+
+async function withFunnelSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (funnelActive >= FUNNEL_CONCURRENCY) await new Promise<void>((r) => funnelQueue.push(r));
+  funnelActive++;
+  try {
+    return await fn();
+  } finally {
+    funnelActive--;
+    funnelQueue.shift()?.();
+  }
+}
+
+async function gaRequestOnce<T>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await client().request<T>({ url, method, data: body });
+      return res.data;
+    } catch (e: unknown) {
+      const err = e as { response?: { status?: number; data?: { error?: { message?: string } } } };
+      const status = err.response?.status;
+      const msg = err.response?.data?.error?.message ?? "";
+      // concurrency 429s clear in seconds; an exhausted hourly token pool does not
+      if (status === 429 && !/Exhausted/i.test(msg) && attempt < 5) {
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function gaRequest<T>(url: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
-  const res = await client().request<T>({
-    url,
-    method,
-    data: body,
-  });
-  return res.data;
+  if (!url.includes(":runFunnelReport")) return gaRequestOnce<T>(url, method, body);
+  const key = url + "\u0001" + JSON.stringify(body);
+  const hit = funnelCache.get(key);
+  // ranges touching today/yesterday still change: keep those only 15 minutes
+  const recent = [0, 1].some((d) => key.includes(new Date(Date.now() - d * 864e5).toISOString().slice(0, 10)));
+  const ttl = recent ? 15 * 60 * 1000 : FUNNEL_CACHE_TTL_MS;
+  if (hit && Date.now() - hit.at < ttl) return hit.data as T;
+  const data = await withFunnelSlot(() => gaRequestOnce<T>(url, method, body));
+  funnelCache.set(key, { at: Date.now(), data });
+  if (funnelCache.size > 5000) funnelCache.delete(funnelCache.keys().next().value!);
+  return data;
 }
 
 // ---------- Admin: list properties visible to the service account ----------
@@ -1093,7 +1140,8 @@ export async function runFunnelReport(
   property: string,
   funnel: FunnelConfig,
   range: ResolvedRange,
-  segment: ReportRequest["filters"] = []
+  segment: ReportRequest["filters"] = [],
+  scope: SegmentScope = "session"
 ): Promise<FunnelResponse> {
   const steps = funnel.steps.filter((s) => s.eventName).slice(0, 10);
   if (steps.length < 2) return { steps: [] };
@@ -1130,9 +1178,14 @@ export async function runFunnelReport(
         filterExpression: stepExpression(s),
       })),
     },
-    // report segment (session/user-scoped conditions) — narrows the funnel to
-    // matching sessions the same way it narrows every other card
-    ...(buildDimensionFilter(segment) ? { dimensionFilter: buildDimensionFilter(segment) } : {}),
+    // report segment: "session" scope narrows the funnel to matching sessions
+    // the same way it narrows every other card; "user" scope applies a REAL
+    // GA4 user segment (users with a matching session, all their activity)
+    ...(scope === "user" && segment.length
+      ? { segments: [{ name: "segment", ...gaUserSegment(segment) }] }
+      : buildDimensionFilter(segment)
+        ? { dimensionFilter: buildDimensionFilter(segment) }
+        : {}),
   };
 
   const data = await gaRequest<RawFunnelReport>(
@@ -1160,4 +1213,336 @@ export async function runFunnelReport(
       rateFromPrevious: i === 0 ? null : users[i - 1] > 0 ? users[i] / users[i - 1] : null,
     })),
   };
+}
+
+// ---------- Data: real GA4 user segments (v1alpha runFunnelReport) ----------
+//
+// GA4's Data API has no segments for ordinary reports. The ONLY place it
+// accepts real user/session segments is runFunnelReport, which returns user
+// counts per funnel step. Everything below is built from that, validated live
+// against a GA4 Exploration user segment on three periods (Tharaa, landing
+// page + query string contains /products/): purchases and purchasers within
+// 0.1-0.3%, revenue within 1.3-4.0% (the estimate runs slightly low).
+//
+//  - users       = totalUsers of the matching SESSIONS (exact core report):
+//                  a user segment "has a matching session" is the same set
+//                  of people, verified within 0.3-1.6% of Explorations.
+//  - purchasers  = users at step 1 of a purchase funnel inside the segment.
+//  - any event (purchases included) = its exact count inside the matching
+//                  sessions (core report) + its count in those users' OTHER
+//                  sessions: a closed funnel event -> event -> ...
+//                  (REPEAT_STEPS, GA4's hard maximum is 10) whose steps also
+//                  require "session does NOT match the conditions" counts
+//                  users with >= 1, >= 2, ... such events; the sum is the
+//                  count. Exact unless a user exceeds 10 in other sessions
+//                  (then flagged in eventsCapped and shown as a floor).
+//  - revenue     = exact revenue of the matching sessions (the filter)
+//                  + those extra purchases x the average order value of
+//                  returning visitors' real-session purchases that did not
+//                  match the conditions. Only this extra part is modelled.
+//  Segment scoping USER_CRITERIA_WITHIN_SAME_SESSION is what an Exploration
+//  user segment does ("all conditions met in one session"); the
+//  ACROSS_ALL_SESSIONS scope evaluates event-by-event and gives different,
+//  smaller numbers for session-scoped fields like landing page.
+
+const REPEAT_STEPS = 10;
+
+function gaSegmentExpression(conditions: ReportRequest["filters"] = []) {
+  const exprs = conditions
+    .filter((c) => c.field && c.value)
+    .map((c) => {
+      const f = {
+        segmentFilter: {
+          fieldName: c.field,
+          stringFilter: { matchType: MATCH_MAP[c.match] ?? "CONTAINS", value: c.value, caseSensitive: false },
+        },
+      };
+      return c.not ? { notExpression: f } : f;
+    });
+  return exprs.length === 1 ? exprs[0] : { andGroup: { expressions: exprs } };
+}
+
+function gaUserSegment(conditions: ReportRequest["filters"] = []) {
+  return {
+    userSegment: {
+      userInclusionCriteria: {
+        andConditionGroups: [
+          { conditionScoping: "USER_CRITERIA_WITHIN_SAME_SESSION", segmentFilterExpression: gaSegmentExpression(conditions) },
+        ],
+      },
+    },
+  };
+}
+
+/** The conditions as a funnel-step filter, negated: "this event happened in
+ *  a session that does NOT match the conditions". */
+function gaFunnelNotMatching(conditions: ReportRequest["filters"] = []) {
+  const exprs = conditions
+    .filter((c) => c.field && c.value)
+    .map((c) => {
+      const f = {
+        funnelFieldFilter: {
+          fieldName: c.field,
+          stringFilter: { matchType: MATCH_MAP[c.match] ?? "CONTAINS", value: c.value, caseSensitive: false },
+        },
+      };
+      return c.not ? { notExpression: f } : f;
+    });
+  return { notExpression: exprs.length === 1 ? exprs[0] : { andGroup: { expressions: exprs } } };
+}
+
+/** Occurrences of `eventName` by users inside `segment` (optionally only in
+ *  sessions matching `stepFilter`): a closed funnel of the same event
+ *  REPEAT_STEPS times gives users with >= k occurrences; the sum over k is
+ *  the event count (exact unless someone exceeds the cap). */
+async function segmentEventCount(
+  property: string,
+  range: ResolvedRange,
+  segment: object,
+  eventName: string,
+  stepFilter?: object
+) {
+  const eventExpr = { funnelEventFilter: { eventName } };
+  const body = {
+    dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+    funnel: {
+      isOpenFunnel: false,
+      steps: Array.from({ length: REPEAT_STEPS }, (_, i) => ({
+        name: `e${i + 1}`,
+        filterExpression: stepFilter ? { andGroup: { expressions: [eventExpr, stepFilter] } } : eventExpr,
+      })),
+    },
+    ...(Object.keys(segment).length ? { segments: [{ name: "segment", ...segment }] } : {}),
+  };
+  const data = await gaRequest<RawFunnelReport>(`${DATA_API_ALPHA}/${property}:runFunnelReport`, "POST", body);
+  const users = new Array<number>(REPEAT_STEPS).fill(0);
+  for (const row of data.funnelTable?.rows ?? []) {
+    const idx = Number((row.dimensionValues?.[0]?.value ?? "").split(".")[0]) - 1;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= REPEAT_STEPS) continue;
+    users[idx] = Math.max(users[idx], Number(row.metricValues?.[0]?.value ?? 0));
+  }
+  return { users: users[0], count: users.reduce((s, v) => s + v, 0), capped: users[REPEAT_STEPS - 1] > 0 };
+}
+
+async function coreTotals(property: string, range: ResolvedRange, metrics: string[], dimensionFilter?: object) {
+  const body: Record<string, unknown> = {
+    dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+    metrics: metrics.map((name) => ({ name })),
+    metricAggregations: ["TOTAL"],
+  };
+  if (dimensionFilter) body.dimensionFilter = dimensionFilter;
+  const data = await gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", body);
+  const vals = data.totals?.[0]?.metricValues ?? data.rows?.[0]?.metricValues ?? [];
+  return { values: metrics.map((_, i) => Number(vals[i]?.value) || 0), currencyCode: data.metadata?.currencyCode };
+}
+
+/** EXACT segment revenue by binary decomposition of order values.
+ *  Each purchase event's value v (cents) = sum_j 2^j * bit_j, so
+ *  revenue = sum_j 2^j * (purchases by segment users among the transactions
+ *  whose value has bit j set). Each of those is an exact count from GA4's own
+ *  segment engine (repeat funnel with step filter transactionId IN group).
+ *  Verified on 5 Exploration segments: -0.05% to -0.69% (the residual is
+ *  GA4's funnel engine placing slightly fewer purchasers in the segment).
+ *  Purchases without a transaction id cannot be attributed this way; their
+ *  revenue is added at the segment's average order value. */
+const TX_CHUNK = 1500;
+async function exactSegmentRevenue(property: string, range: ResolvedRange, segment: object) {
+  const tx = await gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
+    dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+    dimensions: [{ name: "transactionId" }],
+    metrics: [{ name: "purchaseRevenue" }, { name: "ecommercePurchases" }],
+    limit: "250000",
+  });
+  const txs: { id: string; cents: number }[] = [];
+  let noIdPurchases = 0;
+  for (const r of tx.rows ?? []) {
+    const id = r.dimensionValues?.[0]?.value ?? "";
+    const rev = Number(r.metricValues?.[0]?.value) || 0;
+    const n = Number(r.metricValues?.[1]?.value) || 0;
+    if (!id || id === "(not set)") { noIdPurchases += n; continue; }
+    if (n > 0) txs.push({ id, cents: Math.round((rev / n) * 100) });
+  }
+  const pos = txs.filter((t) => t.cents > 0);
+  const maxC = pos.reduce((m, t) => Math.max(m, t.cents), 0);
+  const bits = maxC > 0 ? Math.ceil(Math.log2(maxC + 1)) : 0;
+  const jobs: { bit: number; ids: string[] }[] = [];
+  for (let b = 0; b < bits; b++) {
+    const ids = pos.filter((t) => Math.floor(t.cents / 2 ** b) % 2 === 1).map((t) => t.id);
+    for (let i = 0; i < ids.length; i += TX_CHUNK) jobs.push({ bit: b, ids: ids.slice(i, i + TX_CHUNK) });
+  }
+  const [counts, withId] = await Promise.all([
+    mapLimit(jobs, FUNNEL_CONCURRENCY, (j) =>
+      segmentEventCount(property, range, segment, "purchase", {
+        funnelFieldFilter: { fieldName: "transactionId", inListFilter: { values: j.ids } },
+      })
+    ),
+    noIdPurchases > 0
+      ? segmentEventCount(property, range, segment, "purchase", {
+          notExpression: { funnelFieldFilter: { fieldName: "transactionId", stringFilter: { matchType: "EXACT", value: "(not set)" } } },
+        })
+      : Promise.resolve(null),
+  ]);
+  let cents = 0;
+  counts.forEach((c, i) => (cents += 2 ** jobs[i].bit * c.count));
+  return { revenue: cents / 100, calls: jobs.length, purchasesWithId: withId?.count ?? null };
+}
+
+async function userSegmentPeriod(
+  property: string,
+  conditions: NonNullable<ReportRequest["filters"]>,
+  range: ResolvedRange,
+  events: string[]
+): Promise<UserSegmentTotals & { currencyCode?: string }> {
+  const userSeg = gaUserSegment(conditions);
+  const condFilter = buildDimensionFilter(conditions)!;
+  const notMatching = gaFunnelNotMatching(conditions);
+  const sessionScoped = conditions
+    .filter((c) => c.field && c.value)
+    .every((c) => /^(landingPage|session|newVsReturning)/.test(c.field));
+  // events in those users' OTHER sessions; if GA4 rejects a condition field
+  // inside funnel steps, fall back to counting all their sessions at once
+  const otherCount = async (eventName: string) => {
+    try {
+      return { ...(await segmentEventCount(property, range, userSeg, eventName, notMatching)), split: true };
+    } catch {
+      return { ...(await segmentEventCount(property, range, userSeg, eventName)), split: false };
+    }
+  };
+  const [buyers, matched, matchedEvents, others, exactRev, otherSessions, ...extras] = await Promise.all([
+    segmentEventCount(property, range, userSeg, "purchase"),
+    coreTotals(property, range, ["totalUsers", "totalRevenue", "transactions", "sessions"], condFilter),
+    gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
+      dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+      dimensions: [{ name: "eventName" }],
+      metrics: [{ name: "eventCount" }],
+      dimensionFilter: combineFilters(condFilter, buildEventNameInListFilter(events)),
+    }),
+    // AOV used to value the extra purchases: returning visitors, real
+    // sessions (landing page set), sessions NOT matching the conditions
+    coreTotals(property, range, ["totalRevenue", "transactions"], {
+      andGroup: {
+        expressions: [
+          { notExpression: condFilter },
+          { notExpression: { filter: { fieldName: "landingPagePlusQueryString", stringFilter: { matchType: "EXACT", value: "(not set)" } } } },
+          { filter: { fieldName: "newVsReturning", stringFilter: { matchType: "EXACT", value: "returning" } } },
+        ],
+      },
+    }),
+    // exact revenue; if it fails (e.g. the hourly funnel quota is spent)
+    // the AOV estimate below is used and flagged
+    exactSegmentRevenue(property, range, userSeg).catch(() => null),
+    // sessions = matching sessions (exact) + those users' other sessions
+    // (session_start count; tracks GA4 within ~+0.2-0.8%)
+    sessionScoped
+      ? otherCount("session_start").catch(() => null)
+      : // event-scoped conditions (page path...): a matching session can also
+        // have a non-matching session_start, so count all their session_starts
+        // and calibrate by the property's sessions / funnel session_start ratio
+        // (session_start can fire twice per session). Verified +0.23%.
+        Promise.all([
+          segmentEventCount(property, range, userSeg, "session_start"),
+          segmentEventCount(property, range, {}, "session_start"),
+          coreTotals(property, range, ["sessions"]),
+        ])
+          .then(([seg, all, core]) => ({
+            count: all.count > 0 ? Math.round(seg.count * (core.values[0] / all.count)) : seg.count,
+            capped: seg.capped,
+            split: false,
+          }))
+          .catch(() => null),
+    ...events.map((e) => otherCount(e)),
+  ]);
+  const [users, revenueExact, matchedPurchases, sessions] = matched.values;
+  const [otherRevenue, otherPurchases] = others.values;
+  const inMatched: Record<string, number> = {};
+  for (const r of matchedEvents.rows ?? []) {
+    inMatched[r.dimensionValues?.[0]?.value ?? ""] = Number(r.metricValues?.[0]?.value) || 0;
+  }
+  const evMap: Record<string, number> = {};
+  const capped: string[] = [];
+  events.forEach((e, i) => {
+    const x = extras[i];
+    // split: matched sessions (exact, core) + other sessions (funnel);
+    // fallback: the funnel already counted every session
+    evMap[e] = x.split ? (e === "purchase" ? matchedPurchases : inMatched[e] ?? 0) + x.count : x.count;
+    if (x.capped) capped.push(e);
+  });
+  const purchases = evMap["purchase"] ?? buyers.count;
+  const extraPurchases = Math.max(0, purchases - matchedPurchases);
+  const aov =
+    otherPurchases > 0 ? otherRevenue / otherPurchases : matchedPurchases > 0 ? revenueExact / matchedPurchases : 0;
+  let revenue = revenueExact + extraPurchases * aov;
+  let revenueMethod: UserSegmentTotals["revenueMethod"] = "estimate";
+  if (exactRev) {
+    revenue = exactRev.revenue;
+    // purchases without a transaction id: valued at the segment's own AOV
+    const idP = exactRev.purchasesWithId;
+    if (idP != null && idP > 0 && purchases > idP) revenue += (purchases - idP) * (exactRev.revenue / idP);
+    revenueMethod = "exact";
+  }
+  const totalSessions =
+    otherSessions == null ? null : otherSessions.split ? sessions + otherSessions.count : otherSessions.count;
+  return {
+    users,
+    purchasers: buyers.users,
+    purchases,
+    revenue,
+    revenueMethod,
+    sessions: totalSessions,
+    revenueExact,
+    avgPurchaseRevenue: purchases > 0 ? revenue / purchases : 0,
+    events: evMap,
+    eventsCapped: capped,
+    hasData: sessions > 0,
+    currencyCode: matched.currencyCode,
+  };
+}
+
+/** A real GA4 user segment for Current and Previous (Previous may be the
+ *  mean of N periods, multiPeriodAvg — same rules as the main report: counts
+ *  and revenue divide by N, the average order value skips periods with no
+ *  data at all). */
+export async function runUserSegment(opts: {
+  property: string;
+  conditions: NonNullable<ReportRequest["filters"]>;
+  rangeA: ResolvedRange;
+  rangeB?: ResolvedRange | null;
+  rangeBAverageDivisor?: number;
+  events?: string[];
+}): Promise<UserSegmentResponse> {
+  const events = [...new Set(["purchase", ...(opts.events ?? [])])].slice(0, 12);
+  const n = opts.rangeBAverageDivisor;
+  const prevRanges = !opts.rangeB
+    ? []
+    : n && n > 1
+      ? multiPeriodChunks(opts.rangeA, opts.rangeB)
+      : [opts.rangeB];
+  const all = await mapLimit([opts.rangeA, ...prevRanges], 2, (r) =>
+    userSegmentPeriod(opts.property, opts.conditions, r, events)
+  );
+  const [current, ...prevs] = all;
+  let previous: UserSegmentTotals | null = null;
+  if (prevs.length === 1) previous = prevs[0];
+  else if (prevs.length > 1) {
+    const k = prevs.length;
+    const mean = (f: (p: UserSegmentTotals) => number) => prevs.reduce((s, p) => s + f(p), 0) / k;
+    const withData = prevs.filter((p) => p.hasData && p.purchases > 0);
+    previous = {
+      users: mean((p) => p.users),
+      purchasers: mean((p) => p.purchasers),
+      purchases: mean((p) => p.purchases),
+      revenue: mean((p) => p.revenue),
+      revenueMethod: prevs.every((p) => p.revenueMethod === "exact") ? "exact" : "estimate",
+      sessions: prevs.every((p) => p.sessions != null) ? mean((p) => p.sessions ?? 0) : null,
+      revenueExact: mean((p) => p.revenueExact),
+      avgPurchaseRevenue: withData.length
+        ? withData.reduce((s, p) => s + p.avgPurchaseRevenue, 0) / withData.length
+        : 0,
+      events: Object.fromEntries(events.map((e) => [e, mean((p) => p.events[e] ?? 0)])),
+      eventsCapped: [...new Set(prevs.flatMap((p) => p.eventsCapped))],
+      hasData: prevs.some((p) => p.hasData),
+    };
+  }
+  const { currencyCode, ...cur } = current;
+  return { current: cur, previous, previousPeriods: Math.max(prevs.length, 1), currencyCode };
 }

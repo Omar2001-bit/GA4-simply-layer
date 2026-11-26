@@ -27,13 +27,19 @@ import MetricCarousel from "./MetricCarousel";
 import ReportEditor from "./ReportEditor";
 import SortableMetricCard from "./SortableMetricCard";
 import SortableSection from "./SortableSection";
+import UserSegmentPanel from "./UserSegmentPanel";
 import { detectGranularity } from "@/lib/dates";
 import { newReportId, useMetricOverrides, useReport } from "@/lib/useReport";
 import {
   blockKey,
   CHART_TYPES,
   configDimensions,
+  convRateEventName,
   entryKey,
+  eventMetricName,
+  isConvRateMetric,
+  isEventMetric,
+  isUserSegment,
   nextFloatId,
   reconcileLayout,
   reportFilters,
@@ -673,6 +679,7 @@ export default function ReportCanvas({
                       rangeA={config.rangeA}
                       rangeB={config.rangeB}
                       segment={segmentConditions(config.segment)}
+                      scope={isUserSegment(config.segment) ? "user" : "session"}
                     />
                   ))}
                 </div>
@@ -713,8 +720,9 @@ export default function ReportCanvas({
                   .map((c) => `${c.field} ${c.not ? "not " : ""}${c.match} "${c.value}"`)
                   .join(" AND ")}
               >
-                <Icon name="filter" size={12} />
-                Session filter: {config.segment?.name || "Unnamed filter"}
+                <Icon name={isUserSegment(config.segment) ? "users" : "filter"} size={12} />
+                {isUserSegment(config.segment) ? "Session filter + user segment" : "Session filter"}:{" "}
+                {config.segment?.name || "Unnamed filter"}
               </p>
             )}
           </div>
@@ -795,6 +803,22 @@ export default function ReportCanvas({
         )}
 
         <div className="min-w-0 flex-1 space-y-4">
+          {hasMetrics && isUserSegment(config.segment) && (
+            <UserSegmentPanel
+              property={config.property}
+              name={config.segment?.name}
+              conditions={segmentConditions(config.segment)}
+              rangeA={config.rangeA}
+              rangeB={config.rangeB}
+              events={[
+                ...new Set(
+                  config.metrics.flatMap((m) =>
+                    isEventMetric(m) ? [eventMetricName(m)] : isConvRateMetric(m) ? [convRateEventName(m)] : []
+                  )
+                ),
+              ]}
+            />
+          )}
           {!hasMetrics ? (
             /* blank slate: the report is an empty canvas waiting for its first metric */
             <section className="animate-rise-in flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-[#0e1c26]/50 p-10 text-center">
