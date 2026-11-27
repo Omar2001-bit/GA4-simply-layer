@@ -1,4 +1,5 @@
 import { JWT } from "google-auth-library";
+import { queryKey, queryTtlMs, readQueryCache, writeQueryCache } from "./queryCache";
 import { detectGranularity, enumerateBuckets, granularityDims, multiPeriodChunks } from "./dates";
 import {
   convRateDenom,
@@ -108,21 +109,47 @@ async function gaRequestOnce<T>(url: string, method: "GET" | "POST", body?: unkn
   }
 }
 
+const inflight = new Map<string, Promise<unknown>>();
+
+/**
+ * GA4 request with a two-level per-question cache for data queries
+ * (runReport / runFunnelReport): in-memory first, then Firestore, so the same
+ * question is answered once and reused by every report and instance.
+ * Realtime, metadata and admin calls are never cached.
+ */
 async function gaRequest<T>(url: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
-  if (!url.includes(":runFunnelReport")) return gaRequestOnce<T>(url, method, body);
-  const key = url + "\u0001" + JSON.stringify(body);
+  const isFunnel = url.includes(":runFunnelReport");
+  if (method !== "POST" || !/:run(Funnel)?Report$/.test(url)) return gaRequestOnce<T>(url, method, body);
+  const key = queryKey(url, body);
+  const ttl = queryTtlMs(body);
   const hit = funnelCache.get(key);
-  // ranges touching today/yesterday still change: keep those only 15 minutes
-  const recent = [0, 1].some((d) => key.includes(new Date(Date.now() - d * 864e5).toISOString().slice(0, 10)));
-  const ttl = recent ? 15 * 60 * 1000 : FUNNEL_CACHE_TTL_MS;
-  if (hit && Date.now() - hit.at < ttl) {
+  if (hit && Date.now() - hit.at < Math.min(ttl, FUNNEL_CACHE_TTL_MS)) {
     gaRequestStats.cacheHits++;
     return hit.data as T;
   }
-  const data = await withFunnelSlot(() => gaRequestOnce<T>(url, method, body));
-  funnelCache.set(key, { at: Date.now(), data });
-  if (funnelCache.size > 5000) funnelCache.delete(funnelCache.keys().next().value!);
-  return data;
+  const pending = inflight.get(key);
+  if (pending) return pending as Promise<T>;
+  const run = (async () => {
+    const stored = await readQueryCache<T>(key);
+    if (stored !== undefined) {
+      gaRequestStats.cacheHits++;
+      return stored;
+    }
+    const data = isFunnel
+      ? await withFunnelSlot(() => gaRequestOnce<T>(url, method, body))
+      : await gaRequestOnce<T>(url, method, body);
+    await writeQueryCache(key, data, ttl);
+    return data;
+  })();
+  inflight.set(key, run);
+  try {
+    const data = await run;
+    funnelCache.set(key, { at: Date.now(), data });
+    if (funnelCache.size > 5000) funnelCache.delete(funnelCache.keys().next().value!);
+    return data;
+  } finally {
+    inflight.delete(key);
+  }
 }
 
 // ---------- Admin: list properties visible to the service account ----------
