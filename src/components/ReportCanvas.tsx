@@ -44,6 +44,7 @@ import {
   reconcileLayout,
   reportFilters,
   segmentConditions,
+  userSegmentConditions,
   SECTION_TITLES,
   type ChartType,
   type EntryRef,
@@ -678,7 +679,7 @@ export default function ReportCanvas({
                       funnel={fn}
                       rangeA={config.rangeA}
                       rangeB={config.rangeB}
-                      segment={segmentConditions(config.segment)}
+                      segment={isUserSegment(config.segment) ? userSegmentConditions(config.segment) : segmentConditions(config.segment)}
                       scope={isUserSegment(config.segment) ? "user" : "session"}
                     />
                   ))}
@@ -713,10 +714,10 @@ export default function ReportCanvas({
           <div className="min-w-0">
             <h1 className="truncate text-xl font-semibold text-white">{config.name}</h1>
             {config.description && <p className="truncate text-sm text-[#7f959d]">{config.description}</p>}
-            {segmentConditions(config.segment).length > 0 && (
+            {(segmentConditions(config.segment).length > 0 || isUserSegment(config.segment)) && (
               <p
                 className="mt-1 inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#6ae499]/40 bg-[#6ae499]/10 px-2.5 py-0.5 text-xs text-[#6ae499]"
-                title={segmentConditions(config.segment)
+                title={(isUserSegment(config.segment) ? userSegmentConditions(config.segment) : segmentConditions(config.segment))
                   .map((c) => `${c.field} ${c.not ? "not " : ""}${c.match} "${c.value}"`)
                   .join(" AND ")}
               >
@@ -807,16 +808,10 @@ export default function ReportCanvas({
             <UserSegmentPanel
               property={config.property}
               name={config.segment?.name}
-              conditions={segmentConditions(config.segment)}
+              conditions={userSegmentConditions(config.segment)}
               rangeA={config.rangeA}
               rangeB={config.rangeB}
-              events={[
-                ...new Set(
-                  config.metrics.flatMap((m) =>
-                    isEventMetric(m) ? [eventMetricName(m)] : isConvRateMetric(m) ? [convRateEventName(m)] : []
-                  )
-                ),
-              ]}
+              metrics={config.metrics}
             />
           )}
           {!hasMetrics ? (

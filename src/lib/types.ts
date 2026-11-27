@@ -103,11 +103,49 @@ export interface SegmentConfig {
 export type SegmentScope = "session" | "user";
 
 export function isUserSegment(segment: SegmentConfig | undefined): boolean {
-  return segment?.scope === "user" && segmentConditions(segment).length > 0;
+  return segment?.scope === "user" && userSegmentConditions(segment).length > 0;
 }
 
-/** One period of a real GA4 user segment. Counts come from GA4's segment
- *  engine; revenue is part exact, part modelled (`revenueEstimated`). */
+/** Page fields GA4 accepts inside segments and funnel steps (pagePath itself
+ *  is rejected there; the "+ query string" variant works). Usable only in a
+ *  USER segment ("visited a page"); the session filter ignores them. */
+export const USER_SEGMENT_PAGE_FIELDS = new Set([
+  "pagePathPlusQueryString",
+  "unifiedPagePathScreen",
+  "pageLocation",
+  "hostName",
+]);
+
+/** Conditions of a user segment: session/user fields plus page fields. */
+export function userSegmentConditions(segment: SegmentConfig | undefined): FilterClause[] {
+  return (segment?.conditions ?? []).filter(
+    (f) => f.field && f.value && (isSegmentDimension(f.field) || USER_SEGMENT_PAGE_FIELDS.has(f.field))
+  );
+}
+
+/** Extra figures a user segment can compute on request (each costs GA4
+ *  segment queries, so only when the report asks for them). */
+export type UserSegmentExtra = "newUsers" | "itemsPurchased" | "refunds" | "keyEvents";
+
+export interface UserSegmentPlan {
+  /** events to count (purchase is always included) */
+  events: string[];
+  /** events whose USER count is needed (for user-based rates) */
+  eventUsers: string[];
+  extras: UserSegmentExtra[];
+  /** daily purchases + revenue series for the current range */
+  daily?: boolean;
+}
+
+export interface UserSegmentDay {
+  date: string;
+  purchases: number;
+  /** null when exact revenue was unavailable (quota) */
+  revenue: number | null;
+}
+
+/** One period of a real GA4 user segment, computed through GA4's segment
+ *  engine — see the user segment section of ga4.ts for each method. */
 export interface UserSegmentTotals {
   users: number;
   purchasers: number;
@@ -118,15 +156,25 @@ export interface UserSegmentTotals {
   revenueMethod: "exact" | "estimate";
   /** sessions of segment users (≈, within ~1% of GA4); null when unavailable */
   sessions: number | null;
-  /** the exact part: revenue from sessions that matched the conditions */
+  /** revenue from sessions that matched the conditions (session filter) */
   revenueExact: number;
   avgPurchaseRevenue: number;
-  /** per report event: occurrences by segment users (eventName -> count) */
+  /** extras (null = not requested or unavailable) */
+  newUsers: number | null;
+  itemsPurchased: number | null;
+  refunds: number | null;
+  keyEvents: number | null;
+  keyEventUsers: number | null;
+  /** per event: occurrences by segment users (eventName -> count) */
   events: Record<string, number>;
+  /** per event: segment users who did it at least once */
+  eventUsers: Record<string, number>;
   /** events where some user hit the per-user counting cap (count is a floor) */
   eventsCapped: string[];
   /** false when GA4 had no data at all for this period */
   hasData: boolean;
+  /** current range only, when requested */
+  daily?: UserSegmentDay[];
 }
 
 export interface UserSegmentResponse {
@@ -136,6 +184,31 @@ export interface UserSegmentResponse {
   previousPeriods: number;
   currencyCode?: string;
 }
+
+export interface UserSegmentBreakdownRow {
+  value: string;
+  users: number;
+  purchasers: number;
+  purchases: number;
+  revenue: number | null;
+}
+
+export interface UserSegmentBreakdownResponse {
+  dimension: string;
+  rows: UserSegmentBreakdownRow[];
+  revenueMethod: "exact" | "unavailable";
+  currencyCode?: string;
+}
+
+/** Dimensions a user segment can be broken down by (GA4 funnel breakdown). */
+export const USER_SEGMENT_BREAKDOWNS: { apiName: string; label: string }[] = [
+  { apiName: "deviceCategory", label: "Device category" },
+  { apiName: "sessionDefaultChannelGroup", label: "Session default channel group" },
+  { apiName: "newVsReturning", label: "New / returning" },
+  { apiName: "country", label: "Country" },
+  { apiName: "operatingSystem", label: "Operating system" },
+  { apiName: "browser", label: "Browser" },
+];
 
 export const MAX_SEGMENT_CONDITIONS = 10;
 

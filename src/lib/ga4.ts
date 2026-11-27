@@ -9,7 +9,12 @@ import {
   isNonAdditiveGa4Metric,
   isPeriodSplitSensitive,
   type SegmentScope,
+  type UserSegmentBreakdownResponse,
+  type UserSegmentBreakdownRow,
+  type UserSegmentDay,
+  type UserSegmentPlan,
   type UserSegmentResponse,
+  USER_SEGMENT_PAGE_FIELDS,
   type UserSegmentTotals,
   makeEventMetric,
   TYPE_RATE_PERCENT,
@@ -79,7 +84,12 @@ async function withFunnelSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** request counters (diagnostics / load-cost measurement) */
+export const gaRequestStats = { core: 0, funnel: 0, cacheHits: 0 };
+
 async function gaRequestOnce<T>(url: string, method: "GET" | "POST", body?: unknown): Promise<T> {
+  if (url.includes(":runFunnelReport")) gaRequestStats.funnel++;
+  else gaRequestStats.core++;
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await client().request<T>({ url, method, data: body });
@@ -105,7 +115,10 @@ async function gaRequest<T>(url: string, method: "GET" | "POST" = "GET", body?: 
   // ranges touching today/yesterday still change: keep those only 15 minutes
   const recent = [0, 1].some((d) => key.includes(new Date(Date.now() - d * 864e5).toISOString().slice(0, 10)));
   const ttl = recent ? 15 * 60 * 1000 : FUNNEL_CACHE_TTL_MS;
-  if (hit && Date.now() - hit.at < ttl) return hit.data as T;
+  if (hit && Date.now() - hit.at < ttl) {
+    gaRequestStats.cacheHits++;
+    return hit.data as T;
+  }
   const data = await withFunnelSlot(() => gaRequestOnce<T>(url, method, body));
   funnelCache.set(key, { at: Date.now(), data });
   if (funnelCache.size > 5000) funnelCache.delete(funnelCache.keys().next().value!);
@@ -1217,33 +1230,29 @@ export async function runFunnelReport(
 
 // ---------- Data: real GA4 user segments (v1alpha runFunnelReport) ----------
 //
-// GA4's Data API has no segments for ordinary reports. The ONLY place it
-// accepts real user/session segments is runFunnelReport, which returns user
-// counts per funnel step. Everything below is built from that, validated live
-// against a GA4 Exploration user segment on three periods (Tharaa, landing
-// page + query string contains /products/): purchases and purchasers within
-// 0.1-0.3%, revenue within 1.3-4.0% (the estimate runs slightly low).
+// GA4's Data API only evaluates segments inside funnel reports, and a funnel
+// report's only metric is active users per step. Everything below is built
+// from that one number, using GA4's own segment engine for membership — so
+// the people counted are exactly the people an Exploration user segment
+// (scope USER_CRITERIA_WITHIN_SAME_SESSION: "all conditions met in one
+// session") contains.
 //
-//  - users       = totalUsers of the matching SESSIONS (exact core report):
-//                  a user segment "has a matching session" is the same set
-//                  of people, verified within 0.3-1.6% of Explorations.
-//  - purchasers  = users at step 1 of a purchase funnel inside the segment.
-//  - any event (purchases included) = its exact count inside the matching
-//                  sessions (core report) + its count in those users' OTHER
-//                  sessions: a closed funnel event -> event -> ...
-//                  (REPEAT_STEPS, GA4's hard maximum is 10) whose steps also
-//                  require "session does NOT match the conditions" counts
-//                  users with >= 1, >= 2, ... such events; the sum is the
-//                  count. Exact unless a user exceeds 10 in other sessions
-//                  (then flagged in eventsCapped and shown as a floor).
-//  - revenue     = exact revenue of the matching sessions (the filter)
-//                  + those extra purchases x the average order value of
-//                  returning visitors' real-session purchases that did not
-//                  match the conditions. Only this extra part is modelled.
-//  Segment scoping USER_CRITERIA_WITHIN_SAME_SESSION is what an Exploration
-//  user segment does ("all conditions met in one session"); the
-//  ACROSS_ALL_SESSIONS scope evaluates event-by-event and gives different,
-//  smaller numbers for session-scoped fields like landing page.
+//  - repeat funnel: a closed funnel of the same event REPEAT_STEPS (=10, GA4's
+//    hard maximum) times gives users with >= 1, >= 2, ... occurrences; the
+//    sum is the event count. Exact unless a user exceeds 10 (then flagged and
+//    shown as a floor). TRENDED_FUNNEL returns the same per date; a funnel
+//    breakdown returns it per dimension value.
+//  - sums (revenue, items purchased, refunds): binary decomposition of each
+//    transaction's per-event value: sum = sum_j 2^j * (segment events among
+//    transactions whose value has bit j set). Every term is an exact GA4
+//    count; verified -0.05% to -0.69% against Exploration revenue.
+//  - users = totalUsers of matching sessions (core report: same people).
+//  - any event = exact count inside matching sessions (core) + the repeat
+//    funnel count in those users' other sessions (steps require "session does
+//    NOT match").
+//  - sessions = matching sessions + other session_starts (session-scoped
+//    conditions) or all their session_starts calibrated by the property's
+//    sessions / session_start ratio (page conditions).
 
 const REPEAT_STEPS = 10;
 
@@ -1291,37 +1300,93 @@ function gaFunnelNotMatching(conditions: ReportRequest["filters"] = []) {
   return { notExpression: exprs.length === 1 ? exprs[0] : { andGroup: { expressions: exprs } } };
 }
 
-/** Occurrences of `eventName` by users inside `segment` (optionally only in
- *  sessions matching `stepFilter`): a closed funnel of the same event
- *  REPEAT_STEPS times gives users with >= k occurrences; the sum over k is
- *  the event count (exact unless someone exceeds the cap). */
-async function segmentEventCount(
+const evStep = (eventName: string) => ({ funnelEventFilter: { eventName } });
+const andStep = (a: object, b?: object) => (b ? { andGroup: { expressions: [a, b] } } : a);
+const KEY_EVENT_STEP = { funnelFieldFilter: { fieldName: "isConversionEvent", stringFilter: { matchType: "EXACT", value: "true" } } };
+
+interface RawFunnelWithVis extends RawFunnelReport {
+  funnelVisualization?: {
+    dimensionHeaders?: { name: string }[];
+    rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[];
+  };
+}
+
+interface RepeatResult {
+  /** users with >= 1 occurrence */
+  users: number;
+  /** occurrences (sum over the repeat steps) */
+  count: number;
+  capped: boolean;
+  /** occurrences per date (yyyymmdd) — only with opts.daily */
+  daily: Record<string, number>;
+  /** per breakdown value — only with opts.breakdown */
+  byValue: Record<string, { users: number; count: number }>;
+}
+
+/** Occurrences of the step (an event, optionally with extra step filters)
+ *  by users inside `segment` ({} = everyone), via a repeat funnel. */
+async function segmentRepeat(
   property: string,
   range: ResolvedRange,
   segment: object,
-  eventName: string,
-  stepFilter?: object
-) {
-  const eventExpr = { funnelEventFilter: { eventName } };
-  const body = {
+  stepExpr: object,
+  opts: { daily?: boolean; breakdown?: string } = {}
+): Promise<RepeatResult> {
+  const body: Record<string, unknown> = {
     dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
     funnel: {
       isOpenFunnel: false,
-      steps: Array.from({ length: REPEAT_STEPS }, (_, i) => ({
-        name: `e${i + 1}`,
-        filterExpression: stepFilter ? { andGroup: { expressions: [eventExpr, stepFilter] } } : eventExpr,
-      })),
+      steps: Array.from({ length: REPEAT_STEPS }, (_, i) => ({ name: `e${i + 1}`, filterExpression: stepExpr })),
     },
     ...(Object.keys(segment).length ? { segments: [{ name: "segment", ...segment }] } : {}),
   };
-  const data = await gaRequest<RawFunnelReport>(`${DATA_API_ALPHA}/${property}:runFunnelReport`, "POST", body);
+  if (opts.daily) body.funnelVisualizationType = "TRENDED_FUNNEL";
+  if (opts.breakdown) body.funnelBreakdown = { breakdownDimension: { name: opts.breakdown }, limit: 15 };
+  const data = await gaRequest<RawFunnelWithVis>(`${DATA_API_ALPHA}/${property}:runFunnelReport`, "POST", body);
+  const stepIdx = (v?: string) => Number((v ?? "").split(".")[0]) - 1;
+  const headers = (data.funnelTable?.dimensionHeaders ?? []).map((h) => h.name);
+  const bIdx = opts.breakdown ? headers.indexOf(opts.breakdown) : -1;
   const users = new Array<number>(REPEAT_STEPS).fill(0);
+  const valueSums = new Array<number>(REPEAT_STEPS).fill(0);
+  let sawTotal = false;
+  const byValue: RepeatResult["byValue"] = {};
   for (const row of data.funnelTable?.rows ?? []) {
-    const idx = Number((row.dimensionValues?.[0]?.value ?? "").split(".")[0]) - 1;
+    const idx = stepIdx(row.dimensionValues?.[0]?.value);
     if (!Number.isInteger(idx) || idx < 0 || idx >= REPEAT_STEPS) continue;
-    users[idx] = Math.max(users[idx], Number(row.metricValues?.[0]?.value ?? 0));
+    const n = Number(row.metricValues?.[0]?.value ?? 0);
+    if (bIdx < 0) {
+      users[idx] = Math.max(users[idx], n);
+      continue;
+    }
+    const v = row.dimensionValues?.[bIdx]?.value ?? "";
+    if (v === "RESERVED_TOTAL") {
+      sawTotal = true;
+      users[idx] = Math.max(users[idx], n);
+    } else {
+      const b = (byValue[v] ??= { users: 0, count: 0 });
+      if (idx === 0) b.users = n;
+      b.count += n;
+      valueSums[idx] += n;
+    }
   }
-  return { users: users[0], count: users.reduce((s, v) => s + v, 0), capped: users[REPEAT_STEPS - 1] > 0 };
+  if (bIdx >= 0 && !sawTotal) valueSums.forEach((s, i) => (users[i] = s));
+  const daily: Record<string, number> = {};
+  const vis = data.funnelVisualization;
+  if (opts.daily && vis) {
+    const dIdx = (vis.dimensionHeaders ?? []).findIndex((h) => h.name === "date");
+    for (const row of vis.rows ?? []) {
+      const d = row.dimensionValues?.[dIdx]?.value;
+      if (!d || dIdx < 0) continue;
+      daily[d] = (daily[d] ?? 0) + (Number(row.metricValues?.[0]?.value) || 0);
+    }
+  }
+  return {
+    users: users[0],
+    count: users.reduce((s, v) => s + v, 0),
+    capped: users[REPEAT_STEPS - 1] > 0,
+    daily,
+    byValue,
+  };
 }
 
 async function coreTotals(property: string, range: ResolvedRange, metrics: string[], dimensionFilter?: object) {
@@ -1336,89 +1401,198 @@ async function coreTotals(property: string, range: ResolvedRange, metrics: strin
   return { values: metrics.map((_, i) => Number(vals[i]?.value) || 0), currencyCode: data.metadata?.currencyCode };
 }
 
-/** EXACT segment revenue by binary decomposition of order values.
- *  Each purchase event's value v (cents) = sum_j 2^j * bit_j, so
- *  revenue = sum_j 2^j * (purchases by segment users among the transactions
- *  whose value has bit j set). Each of those is an exact count from GA4's own
- *  segment engine (repeat funnel with step filter transactionId IN group).
- *  Verified on 5 Exploration segments: -0.05% to -0.69% (the residual is
- *  GA4's funnel engine placing slightly fewer purchasers in the segment).
- *  Purchases without a transaction id cannot be attributed this way; their
- *  revenue is added at the segment's average order value. */
+/** What to sum per transaction: `valueMetric` / `countMetric` per
+ *  transactionId gives the value of ONE `event`; `scale` turns it into an
+ *  integer (100 = cents). */
+interface SumSpec {
+  event: string;
+  valueMetric: string;
+  countMetric: string;
+  scale: number;
+  filter?: object;
+}
+const REVENUE_SUM: SumSpec = { event: "purchase", valueMetric: "purchaseRevenue", countMetric: "ecommercePurchases", scale: 100 };
+const ITEMS_SUM: SumSpec = { event: "purchase", valueMetric: "itemsPurchased", countMetric: "ecommercePurchases", scale: 1 };
+const REFUND_SUM: SumSpec = {
+  event: "refund",
+  valueMetric: "refundAmount",
+  countMetric: "eventCount",
+  scale: 100,
+  filter: { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: "refund" } } },
+};
+
+interface SumResult {
+  total: number;
+  daily: Record<string, number>;
+  byValue: Record<string, number>;
+  calls: number;
+}
+
 const TX_CHUNK = 1500;
-async function exactSegmentRevenue(property: string, range: ResolvedRange, segment: object) {
+/** EXACT segment sum by binary decomposition (see the section comment).
+ *  Events without a transaction id can't be attributed to a value; they are
+ *  valued at the average of the segment's events that have one. */
+async function exactSegmentSum(
+  property: string,
+  range: ResolvedRange,
+  segment: object,
+  spec: SumSpec,
+  opts: { daily?: boolean; breakdown?: string; only?: object } = {}
+): Promise<SumResult> {
+  const { only, ...repeatOpts } = opts;
   const tx = await gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
     dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
     dimensions: [{ name: "transactionId" }],
-    metrics: [{ name: "purchaseRevenue" }, { name: "ecommercePurchases" }],
+    metrics: [{ name: spec.valueMetric }, { name: spec.countMetric }],
+    ...(spec.filter ? { dimensionFilter: spec.filter } : {}),
     limit: "250000",
   });
-  const txs: { id: string; cents: number }[] = [];
-  let noIdPurchases = 0;
+  const txs: { id: string; units: number }[] = [];
+  let noId = 0;
   for (const r of tx.rows ?? []) {
     const id = r.dimensionValues?.[0]?.value ?? "";
-    const rev = Number(r.metricValues?.[0]?.value) || 0;
+    const value = Math.abs(Number(r.metricValues?.[0]?.value) || 0);
     const n = Number(r.metricValues?.[1]?.value) || 0;
-    if (!id || id === "(not set)") { noIdPurchases += n; continue; }
-    if (n > 0) txs.push({ id, cents: Math.round((rev / n) * 100) });
+    if (!id || id === "(not set)") {
+      noId += n;
+      continue;
+    }
+    if (n > 0) txs.push({ id, units: Math.round((value / n) * spec.scale) });
   }
-  const pos = txs.filter((t) => t.cents > 0);
-  const maxC = pos.reduce((m, t) => Math.max(m, t.cents), 0);
-  const bits = maxC > 0 ? Math.ceil(Math.log2(maxC + 1)) : 0;
+  const pos = txs.filter((t) => t.units > 0);
+  const maxU = pos.reduce((m, t) => Math.max(m, t.units), 0);
+  const bits = maxU > 0 ? Math.ceil(Math.log2(maxU + 1)) : 0;
   const jobs: { bit: number; ids: string[] }[] = [];
   for (let b = 0; b < bits; b++) {
-    const ids = pos.filter((t) => Math.floor(t.cents / 2 ** b) % 2 === 1).map((t) => t.id);
+    const ids = pos.filter((t) => Math.floor(t.units / 2 ** b) % 2 === 1).map((t) => t.id);
     for (let i = 0; i < ids.length; i += TX_CHUNK) jobs.push({ bit: b, ids: ids.slice(i, i + TX_CHUNK) });
   }
-  const [counts, withId] = await Promise.all([
+  const step = andStep(evStep(spec.event), only);
+  const [counts, withId, all] = await Promise.all([
     mapLimit(jobs, FUNNEL_CONCURRENCY, (j) =>
-      segmentEventCount(property, range, segment, "purchase", {
-        funnelFieldFilter: { fieldName: "transactionId", inListFilter: { values: j.ids } },
-      })
+      segmentRepeat(
+        property,
+        range,
+        segment,
+        andStep(step, { funnelFieldFilter: { fieldName: "transactionId", inListFilter: { values: j.ids } } }),
+        repeatOpts
+      )
     ),
-    noIdPurchases > 0
-      ? segmentEventCount(property, range, segment, "purchase", {
-          notExpression: { funnelFieldFilter: { fieldName: "transactionId", stringFilter: { matchType: "EXACT", value: "(not set)" } } },
-        })
+    noId > 0
+      ? segmentRepeat(
+          property,
+          range,
+          segment,
+          andStep(step, {
+            notExpression: {
+              funnelFieldFilter: { fieldName: "transactionId", stringFilter: { matchType: "EXACT", value: "(not set)" } },
+            },
+          }),
+          repeatOpts
+        )
       : Promise.resolve(null),
+    noId > 0 ? segmentRepeat(property, range, segment, step, repeatOpts) : Promise.resolve(null),
   ]);
-  let cents = 0;
-  counts.forEach((c, i) => (cents += 2 ** jobs[i].bit * c.count));
-  return { revenue: cents / 100, calls: jobs.length, purchasesWithId: withId?.count ?? null };
+  let total = 0;
+  const daily: Record<string, number> = {};
+  const byValue: Record<string, number> = {};
+  counts.forEach((c, i) => {
+    const w = 2 ** jobs[i].bit;
+    total += w * c.count;
+    for (const [d, n] of Object.entries(c.daily)) daily[d] = (daily[d] ?? 0) + w * n;
+    for (const [v, x] of Object.entries(c.byValue)) byValue[v] = (byValue[v] ?? 0) + w * x.count;
+  });
+  // scale up for events without a transaction id (factor = all / with id)
+  const factor = (a?: number, b?: number) => (a != null && b != null && b > 0 && a > b ? a / b : 1);
+  if (withId && all) {
+    total *= factor(all.count, withId.count);
+    for (const d of Object.keys(daily)) daily[d] *= factor(all.daily[d], withId.daily[d]);
+    for (const v of Object.keys(byValue)) byValue[v] *= factor(all.byValue[v]?.count, withId.byValue[v]?.count);
+  }
+  const s = spec.scale;
+  return {
+    total: total / s,
+    daily: Object.fromEntries(Object.entries(daily).map(([d, n]) => [d, n / s])),
+    byValue: Object.fromEntries(Object.entries(byValue).map(([v, n]) => [v, n / s])),
+    calls: jobs.length + (noId > 0 ? 2 : 0) + 1,
+  };
+}
+
+/** Condition fields that are per EVENT (a page) rather than constant over
+ *  the session: a session can match on a later page view but not on its
+ *  session_start, so sessions use the calibrated method. */
+function isSessionScopedConditions(conditions: NonNullable<ReportRequest["filters"]>) {
+  return conditions.filter((c) => c.field && c.value).every((c) => !USER_SEGMENT_PAGE_FIELDS.has(c.field));
 }
 
 async function userSegmentPeriod(
   property: string,
   conditions: NonNullable<ReportRequest["filters"]>,
   range: ResolvedRange,
-  events: string[]
+  plan: UserSegmentPlan,
+  daily: boolean
 ): Promise<UserSegmentTotals & { currencyCode?: string }> {
-  const userSeg = gaUserSegment(conditions);
+  const seg = gaUserSegment(conditions);
   const condFilter = buildDimensionFilter(conditions)!;
   const notMatching = gaFunnelNotMatching(conditions);
-  const sessionScoped = conditions
-    .filter((c) => c.field && c.value)
-    .every((c) => /^(landingPage|session|newVsReturning)/.test(c.field));
-  // events in those users' OTHER sessions; if GA4 rejects a condition field
-  // inside funnel steps, fall back to counting all their sessions at once
-  const otherCount = async (eventName: string) => {
-    try {
-      return { ...(await segmentEventCount(property, range, userSeg, eventName, notMatching)), split: true };
-    } catch {
-      return { ...(await segmentEventCount(property, range, userSeg, eventName)), split: false };
-    }
-  };
-  const [buyers, matched, matchedEvents, others, exactRev, otherSessions, ...extras] = await Promise.all([
-    segmentEventCount(property, range, userSeg, "purchase"),
-    coreTotals(property, range, ["totalUsers", "totalRevenue", "transactions", "sessions"], condFilter),
+  const sessionScoped = isSessionScopedConditions(conditions);
+  const extras = new Set(plan.extras);
+  const soft = <T>(p: Promise<T>) => p.catch(() => null);
+  const events = [...new Set(["purchase", ...plan.events])];
+  const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
+
+  // 1) exact core figures for the MATCHING sessions (the session filter)
+  const [matched, matchedEvents, matchedDaily] = await Promise.all([
+    coreTotals(
+      property,
+      range,
+      ["totalUsers", "purchaseRevenue", "transactions", "sessions", "keyEvents", "itemsPurchased", "refundAmount"],
+      condFilter
+    ),
     gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
-      dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+      dateRanges,
       dimensions: [{ name: "eventName" }],
       metrics: [{ name: "eventCount" }],
       dimensionFilter: combineFilters(condFilter, buildEventNameInListFilter(events)),
     }),
-    // AOV used to value the extra purchases: returning visitors, real
-    // sessions (landing page set), sessions NOT matching the conditions
+    daily
+      ? gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
+          dateRanges,
+          dimensions: [{ name: "date" }],
+          metrics: [{ name: "transactions" }, { name: "purchaseRevenue" }],
+          dimensionFilter: condFilter,
+          limit: "1000",
+        })
+      : Promise.resolve(null),
+  ]);
+  const [users, revenueMatched, matchedPurchases, matchedSessions, matchedKeyEvents, matchedItems, matchedRefunds] =
+    matched.values;
+
+  // 2) the segment users' OTHER sessions through GA4's segment engine (steps
+  //    require "session does NOT match"); if GA4 rejects a condition field
+  //    inside funnel steps, fall back to counting all their sessions
+  const other = async (base: object, o: { daily?: boolean } = {}) => {
+    try {
+      return { ...(await segmentRepeat(property, range, seg, andStep(base, notMatching), o)), split: true };
+    } catch {
+      return { ...(await segmentRepeat(property, range, seg, base, o)), split: false };
+    }
+  };
+  // exact sum = core value of the matching sessions + binary sum over the others
+  const hybridSum = async (spec: SumSpec, matchedValue: number, o: { daily?: boolean } = {}) => {
+    try {
+      const x = await exactSegmentSum(property, range, seg, spec, { ...o, only: notMatching });
+      return { total: matchedValue + x.total, daily: x.daily, split: true };
+    } catch {
+      const x = await exactSegmentSum(property, range, seg, spec, o);
+      return { total: x.total, daily: x.daily, split: false };
+    }
+  };
+
+  const [buyers, aovRef, rev, sess, items, refunds, keyOther, keyUsers, others, evUsers] = await Promise.all([
+    segmentRepeat(property, range, seg, evStep("purchase")),
+    // AOV for the fallback estimate: returning visitors' real sessions
+    // (landing page set) that did NOT match the conditions
     coreTotals(property, range, ["totalRevenue", "transactions"], {
       andGroup: {
         expressions: [
@@ -1428,32 +1602,30 @@ async function userSegmentPeriod(
         ],
       },
     }),
-    // exact revenue; if it fails (e.g. the hourly funnel quota is spent)
-    // the AOV estimate below is used and flagged
-    exactSegmentRevenue(property, range, userSeg).catch(() => null),
-    // sessions = matching sessions (exact) + those users' other sessions
-    // (session_start count; tracks GA4 within ~+0.2-0.8%)
+    soft(hybridSum(REVENUE_SUM, revenueMatched, { daily })),
     sessionScoped
-      ? otherCount("session_start").catch(() => null)
-      : // event-scoped conditions (page path...): a matching session can also
-        // have a non-matching session_start, so count all their session_starts
-        // and calibrate by the property's sessions / funnel session_start ratio
-        // (session_start can fire twice per session). Verified +0.23%.
-        Promise.all([
-          segmentEventCount(property, range, userSeg, "session_start"),
-          segmentEventCount(property, range, {}, "session_start"),
-          coreTotals(property, range, ["sessions"]),
-        ])
-          .then(([seg, all, core]) => ({
-            count: all.count > 0 ? Math.round(seg.count * (core.values[0] / all.count)) : seg.count,
-            capped: seg.capped,
+      ? soft(other(evStep("session_start")))
+      : soft(
+          Promise.all([
+            segmentRepeat(property, range, seg, evStep("session_start")),
+            segmentRepeat(property, range, {}, evStep("session_start")),
+            coreTotals(property, range, ["sessions"]),
+          ]).then(([s, all, core]) => ({
+            count: all.count > 0 ? Math.round(s.count * (core.values[0] / all.count)) : s.count,
             split: false,
           }))
-          .catch(() => null),
-    ...events.map((e) => otherCount(e)),
+        ),
+    extras.has("itemsPurchased") ? soft(hybridSum(ITEMS_SUM, matchedItems)) : null,
+    extras.has("refunds") ? soft(hybridSum(REFUND_SUM, matchedRefunds)) : null,
+    extras.has("keyEvents") ? soft(other(KEY_EVENT_STEP)) : null,
+    extras.has("keyEvents") ? soft(segmentRepeat(property, range, seg, KEY_EVENT_STEP)) : null,
+    Promise.all(events.map((e) => other(evStep(e), { daily: daily && e === "purchase" }))),
+    Promise.all(
+      plan.eventUsers.filter((e) => e !== "purchase").map((e) => soft(segmentRepeat(property, range, seg, evStep(e))))
+    ),
   ]);
-  const [users, revenueExact, matchedPurchases, sessions] = matched.values;
-  const [otherRevenue, otherPurchases] = others.values;
+
+  const [refRevenue, refPurchases] = aovRef.values;
   const inMatched: Record<string, number> = {};
   for (const r of matchedEvents.rows ?? []) {
     inMatched[r.dimensionValues?.[0]?.value ?? ""] = Number(r.metricValues?.[0]?.value) || 0;
@@ -1461,64 +1633,113 @@ async function userSegmentPeriod(
   const evMap: Record<string, number> = {};
   const capped: string[] = [];
   events.forEach((e, i) => {
-    const x = extras[i];
-    // split: matched sessions (exact, core) + other sessions (funnel);
-    // fallback: the funnel already counted every session
+    const x = others[i];
     evMap[e] = x.split ? (e === "purchase" ? matchedPurchases : inMatched[e] ?? 0) + x.count : x.count;
     if (x.capped) capped.push(e);
   });
+  const eventUsers: Record<string, number> = { purchase: buyers.users };
+  plan.eventUsers
+    .filter((e) => e !== "purchase")
+    .forEach((e, i) => {
+      const r = evUsers[i];
+      if (r) eventUsers[e] = r.users;
+    });
   const purchases = evMap["purchase"] ?? buyers.count;
-  const extraPurchases = Math.max(0, purchases - matchedPurchases);
-  const aov =
-    otherPurchases > 0 ? otherRevenue / otherPurchases : matchedPurchases > 0 ? revenueExact / matchedPurchases : 0;
-  let revenue = revenueExact + extraPurchases * aov;
-  let revenueMethod: UserSegmentTotals["revenueMethod"] = "estimate";
-  if (exactRev) {
-    revenue = exactRev.revenue;
-    // purchases without a transaction id: valued at the segment's own AOV
-    const idP = exactRev.purchasesWithId;
-    if (idP != null && idP > 0 && purchases > idP) revenue += (purchases - idP) * (exactRev.revenue / idP);
+  let revenue: number;
+  let revenueMethod: UserSegmentTotals["revenueMethod"];
+  if (rev) {
+    revenue = rev.total;
     revenueMethod = "exact";
+  } else {
+    const extra = Math.max(0, purchases - matchedPurchases);
+    const aov =
+      refPurchases > 0 ? refRevenue / refPurchases : matchedPurchases > 0 ? revenueMatched / matchedPurchases : 0;
+    revenue = revenueMatched + extra * aov;
+    revenueMethod = "estimate";
   }
-  const totalSessions =
-    otherSessions == null ? null : otherSessions.split ? sessions + otherSessions.count : otherSessions.count;
+  const sessions = sess == null ? null : sess.split ? matchedSessions + sess.count : sess.count;
+  let keyEvents: number | null = null;
+  if (keyOther) {
+    keyEvents = keyOther.split ? matchedKeyEvents + keyOther.count : keyOther.count;
+    if (keyOther.capped) capped.push("keyEvents");
+  }
+  let dailyRows: UserSegmentDay[] | undefined;
+  if (daily) {
+    // per date: matching sessions exact (core) + other sessions (segment engine)
+    const coreDay: Record<string, { p: number; r: number }> = {};
+    for (const row of matchedDaily?.rows ?? []) {
+      coreDay[row.dimensionValues?.[0]?.value ?? ""] = {
+        p: Number(row.metricValues?.[0]?.value) || 0,
+        r: Number(row.metricValues?.[1]?.value) || 0,
+      };
+    }
+    const op = others[0];
+    dailyRows = enumerateDays(range).map((d) => {
+      const c = coreDay[d] ?? { p: 0, r: 0 };
+      return {
+        date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`,
+        purchases: (op.split ? c.p : 0) + (op.daily[d] ?? 0),
+        revenue: rev ? (rev.split ? c.r : 0) + (rev.daily[d] ?? 0) : null,
+      };
+    });
+  }
   return {
     users,
     purchasers: buyers.users,
     purchases,
     revenue,
     revenueMethod,
-    sessions: totalSessions,
-    revenueExact,
+    sessions,
+    revenueExact: revenueMatched,
     avgPurchaseRevenue: purchases > 0 ? revenue / purchases : 0,
+    // GA4 Explorations' "New users" can't be reproduced through the segment
+    // API (every route measured ~15% low), so it is not offered
+    newUsers: null,
+    itemsPurchased: items ? Math.round(items.total) : null,
+    refunds: refunds ? refunds.total : null,
+    keyEvents,
+    keyEventUsers: keyUsers ? keyUsers.users : null,
     events: evMap,
+    eventUsers,
     eventsCapped: capped,
-    hasData: sessions > 0,
+    hasData: matchedSessions > 0,
+    daily: dailyRows,
     currencyCode: matched.currencyCode,
   };
 }
 
+/** yyyymmdd for every day of the range */
+function enumerateDays(range: ResolvedRange): string[] {
+  const out: string[] = [];
+  const end = new Date(range.endDate + "T00:00:00Z");
+  for (let d = new Date(range.startDate + "T00:00:00Z"); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    out.push(d.toISOString().slice(0, 10).replaceAll("-", ""));
+  }
+  return out;
+}
+
 /** A real GA4 user segment for Current and Previous (Previous may be the
  *  mean of N periods, multiPeriodAvg — same rules as the main report: counts
- *  and revenue divide by N, the average order value skips periods with no
- *  data at all). */
+ *  and sums divide by N, the average order value skips periods with no data
+ *  at all). The daily series is computed for Current only. */
 export async function runUserSegment(opts: {
   property: string;
   conditions: NonNullable<ReportRequest["filters"]>;
   rangeA: ResolvedRange;
   rangeB?: ResolvedRange | null;
   rangeBAverageDivisor?: number;
-  events?: string[];
+  plan: UserSegmentPlan;
 }): Promise<UserSegmentResponse> {
-  const events = [...new Set(["purchase", ...(opts.events ?? [])])].slice(0, 12);
+  const plan: UserSegmentPlan = {
+    events: [...new Set(["purchase", ...opts.plan.events])].slice(0, 12),
+    eventUsers: [...new Set(opts.plan.eventUsers)].slice(0, 6),
+    extras: [...new Set(opts.plan.extras)],
+    daily: !!opts.plan.daily,
+  };
   const n = opts.rangeBAverageDivisor;
-  const prevRanges = !opts.rangeB
-    ? []
-    : n && n > 1
-      ? multiPeriodChunks(opts.rangeA, opts.rangeB)
-      : [opts.rangeB];
+  const prevRanges = !opts.rangeB ? [] : n && n > 1 ? multiPeriodChunks(opts.rangeA, opts.rangeB) : [opts.rangeB];
   const all = await mapLimit([opts.rangeA, ...prevRanges], 2, (r) =>
-    userSegmentPeriod(opts.property, opts.conditions, r, events)
+    userSegmentPeriod(opts.property, opts.conditions, r, plan, r === opts.rangeA && !!plan.daily)
   );
   const [current, ...prevs] = all;
   let previous: UserSegmentTotals | null = null;
@@ -1526,23 +1747,92 @@ export async function runUserSegment(opts: {
   else if (prevs.length > 1) {
     const k = prevs.length;
     const mean = (f: (p: UserSegmentTotals) => number) => prevs.reduce((s, p) => s + f(p), 0) / k;
+    const meanOrNull = (f: (p: UserSegmentTotals) => number | null) =>
+      prevs.every((p) => f(p) != null) ? mean((p) => f(p) ?? 0) : null;
     const withData = prevs.filter((p) => p.hasData && p.purchases > 0);
+    const keys = (f: (p: UserSegmentTotals) => Record<string, number>) => [...new Set(prevs.flatMap((p) => Object.keys(f(p))))];
     previous = {
       users: mean((p) => p.users),
       purchasers: mean((p) => p.purchasers),
       purchases: mean((p) => p.purchases),
       revenue: mean((p) => p.revenue),
       revenueMethod: prevs.every((p) => p.revenueMethod === "exact") ? "exact" : "estimate",
-      sessions: prevs.every((p) => p.sessions != null) ? mean((p) => p.sessions ?? 0) : null,
+      sessions: meanOrNull((p) => p.sessions),
       revenueExact: mean((p) => p.revenueExact),
       avgPurchaseRevenue: withData.length
         ? withData.reduce((s, p) => s + p.avgPurchaseRevenue, 0) / withData.length
         : 0,
-      events: Object.fromEntries(events.map((e) => [e, mean((p) => p.events[e] ?? 0)])),
+      newUsers: meanOrNull((p) => p.newUsers),
+      itemsPurchased: meanOrNull((p) => p.itemsPurchased),
+      refunds: meanOrNull((p) => p.refunds),
+      keyEvents: meanOrNull((p) => p.keyEvents),
+      keyEventUsers: meanOrNull((p) => p.keyEventUsers),
+      events: Object.fromEntries(keys((p) => p.events).map((e) => [e, mean((p) => p.events[e] ?? 0)])),
+      eventUsers: Object.fromEntries(keys((p) => p.eventUsers).map((e) => [e, mean((p) => p.eventUsers[e] ?? 0)])),
       eventsCapped: [...new Set(prevs.flatMap((p) => p.eventsCapped))],
       hasData: prevs.some((p) => p.hasData),
     };
   }
   const { currencyCode, ...cur } = current;
   return { current: cur, previous, previousPeriods: Math.max(prevs.length, 1), currencyCode };
+}
+
+/** The segment split by one dimension (top 15 values, GA4's funnel
+ *  breakdown limit): users (session_start step), purchasers, purchases and
+ *  exact revenue per value. Current range only. */
+export async function runUserSegmentBreakdown(opts: {
+  property: string;
+  conditions: NonNullable<ReportRequest["filters"]>;
+  range: ResolvedRange;
+  dimension: string;
+}): Promise<UserSegmentBreakdownResponse> {
+  const { property, range, dimension } = opts;
+  const seg = gaUserSegment(opts.conditions);
+  const condFilter = buildDimensionFilter(opts.conditions)!;
+  const notMatching = gaFunnelNotMatching(opts.conditions);
+  const o = { breakdown: dimension };
+  // same method as the totals: matching sessions exact (core, by value) +
+  // the users' other sessions through GA4's segment engine (funnel breakdown)
+  const [core, buyersR, otherPurch, otherRev] = await Promise.all([
+    gaRequest<RawReport>(`${DATA_API}/${property}:runReport`, "POST", {
+      dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+      dimensions: [{ name: dimension }],
+      metrics: [{ name: "totalUsers" }, { name: "transactions" }, { name: "purchaseRevenue" }],
+      dimensionFilter: condFilter,
+      limit: "250",
+    }),
+    segmentRepeat(property, range, seg, evStep("purchase"), o),
+    segmentRepeat(property, range, seg, andStep(evStep("purchase"), notMatching), o).catch(() => null),
+    exactSegmentSum(property, range, seg, REVENUE_SUM, { ...o, only: notMatching }).catch(() => null),
+  ]);
+  const coreBy: Record<string, { users: number; purchases: number; revenue: number }> = {};
+  for (const r of core.rows ?? []) {
+    coreBy[r.dimensionValues?.[0]?.value ?? ""] = {
+      users: Number(r.metricValues?.[0]?.value) || 0,
+      purchases: Number(r.metricValues?.[1]?.value) || 0,
+      revenue: Number(r.metricValues?.[2]?.value) || 0,
+    };
+  }
+  const values = [...new Set([...Object.keys(coreBy), ...Object.keys(buyersR.byValue)])];
+  const rows: UserSegmentBreakdownRow[] = values
+    .map((value) => {
+      const c = coreBy[value] ?? { users: 0, purchases: 0, revenue: 0 };
+      return {
+        value,
+        users: c.users,
+        purchasers: buyersR.byValue[value]?.users ?? 0,
+        purchases: otherPurch
+          ? c.purchases + (otherPurch.byValue[value]?.count ?? 0)
+          : buyersR.byValue[value]?.count ?? 0,
+        revenue: otherRev ? c.revenue + (otherRev.byValue[value] ?? 0) : null,
+      };
+    })
+    .sort((a, b) => b.users - a.users || b.purchases - a.purchases)
+    .slice(0, 15);
+  return {
+    dimension,
+    rows,
+    revenueMethod: otherRev ? "exact" : "unavailable",
+    currencyCode: core.metadata?.currencyCode,
+  };
 }

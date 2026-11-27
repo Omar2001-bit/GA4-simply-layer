@@ -16,6 +16,7 @@ import {
   configDimensions,
   isConvRateMetric,
   isSegmentDimension,
+  USER_SEGMENT_PAGE_FIELDS,
   isEventMetric,
   makeConvRateMetric,
   makeEventMetric,
@@ -111,7 +112,11 @@ export default function ReportEditor({
   };
 
   const segment: SegmentConfig = config.segment ?? { name: "", conditions: [] };
-  const segmentDims = (metadata?.dimensions ?? []).filter((d) => isSegmentDimension(d.apiName));
+  // page fields ("visited a page") only work in a USER segment — GA4 scores them
+  // inside its segment engine; the session filter ignores them
+  const segmentDims = (metadata?.dimensions ?? []).filter(
+    (d) => isSegmentDimension(d.apiName) || (segment.scope === "user" && USER_SEGMENT_PAGE_FIELDS.has(d.apiName))
+  );
   const setSegment = (patch: Partial<SegmentConfig>) => {
     const next = { ...segment, ...patch };
     // an empty segment is no segment — drop it so the report reads as "all sessions"
@@ -535,9 +540,11 @@ export default function ReportEditor({
           <p className="mt-1.5 text-[11px] leading-snug text-[#c2d1d5]">
             <span className="font-semibold text-[#6ae499]">User segment on:</span> a User segment panel adds GA4&rsquo;s
             real user segment (users with a matching session, and everything they did in the range), matching an
-            Exploration user segment. Purchases and purchasers come from GA4&rsquo;s own segment engine; revenue is
-            partly estimated (&asymp;, validated within about 1&ndash;4%). Funnels switch to the user segment too.
-            Slower: several GA4 queries per period.
+            Exploration user segment, for every report metric GA4&rsquo;s segment engine can compute &mdash; revenue
+            exact (within ~0.7%), sessions &asymp; (within ~1%), plus a daily chart and breakdowns. Page fields
+            (&ldquo;visited /products&rdquo;) can be added as conditions here; they apply to the user segment and
+            funnels only, not the session-filtered cards. Uses GA4&rsquo;s segment quota (about 2 fresh loads per hour
+            with a comparison; reloads are cached).
           </p>
         )}
       </div>
